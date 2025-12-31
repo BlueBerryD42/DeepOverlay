@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap');
+
+        body {
+            width: 200px;
+            padding: 0;
+            margin: 0;
+            font-family: 'Roboto Mono', 'JetBrains Mono', monospace;
+            background: #fff;
+            color: #000;
+        }
+
+        .status-bar {
+            padding: 10px 20px;
+            background: #f9f9f9;
+            border-bottom: 1px solid #eee;
+            font-size: 12px;
+            color: #666;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ccc;
+            display: inline-block;
+        }
+
+        .status-dot.active {
+            background: #4caf50;
+        }
+
+        button {
+            display: block;
+            width: 100%;
+            border: none;
+            background: #fff;
+            color: #000;
+            padding: 15px 20px;
+            text-align: left;
+            font-family: inherit;
+            font-size: 14px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        button:hover {
+            background: #f5f5f5;
+        }
+
+        button:last-child {
+            border-bottom: none;
+        }
+
+        .icon {
+            margin-right: 10px;
+        }
+
+        /* Edit Mode Toggle Switch style */
+        .switch {
+            position: relative;
+            width: 34px;
+            height: 20px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 20px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked+.slider {
+            background-color: #000;
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(14px);
+        }
+
+        /* Edit Row */
+        #edit-row {
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #eee;
+        }
+
+        #edit-row span {
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="status-bar">
+        <span id="status-text">Inactive</span>
+        <span id="status-ind" class="status-dot"></span>
+    </div>
+
+    <button id="toggle-btn">
+        <span>Toggle Overlay</span>
+    </button>
+
+    <div id="edit-row">
+        <span>Edit Mode</span>
+        <label class="switch">
+            <input type="checkbox" id="edit-check">
+            <span class="slider"></span>
+        </label>
+    </div>
+
+    <button id="dashboard-btn">
+        <span>Dashboard</span>
+    </button>
+
+    <script src="popup.js"></script>
+</body>
+
+</html>

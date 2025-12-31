@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap');
+
+    body {
+      background: #fdfdfd;
+      color: #333;
+      font-family: 'Roboto Mono', 'JetBrains Mono', monospace;
+      padding: 40px;
+      max-width: 900px;
+      /* Wider for dashboard */
+      margin: 0 auto;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 20px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: normal;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    /* Inputs */
+    input[type="text"] {
+      width: 100%;
+      padding: 12px;
+      font-family: inherit;
+      font-size: 16px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      box-sizing: border-box;
+      outline: none;
+    }
+
+    input[type="text"]:focus {
+      border-color: #999;
+    }
+
+    /* Dashboard List */
+    #dashboard-list {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    /* Domain Group */
+    .domain-group {
+      background: #fff;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .domain-header {
+      padding: 15px 20px;
+      background: #fdfdfd;
+      border-bottom: 1px solid #eee;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s;
+    }
+
+    .domain-header:hover {
+      background: #f9f9f9;
+    }
+
+    .domain-header .domain-name {
+      font-weight: bold;
+      font-size: 15px;
+    }
+
+    .domain-header .domain-meta {
+      font-size: 12px;
+      color: #777;
+    }
+
+    .domain-header .toggle-icon {
+      margin-right: 10px;
+      font-size: 12px;
+      transition: transform 0.2s;
+      display: inline-block;
+    }
+
+    .domain-header.open .toggle-icon {
+      transform: rotate(90deg);
+    }
+
+    /* Page List (inside domain) */
+    .page-list {
+      display: none;
+    }
+
+    .page-list.open {
+      display: block;
+    }
+
+    /* Page Row */
+    .page-row {
+      border-bottom: 1px solid #fcfcfc;
+    }
+
+    .page-row:last-child {
+      border-bottom: none;
+    }
+
+    .page-header {
+      padding: 12px 20px 12px 40px;
+      /* Indent */
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .page-header:hover {
+      background: #fbfbfb;
+    }
+
+    .page-path {
+      color: #444;
+      word-break: break-all;
+      margin-right: 15px;
+    }
+
+    .page-path a {
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .page-path a:hover {
+      text-decoration: underline;
+      color: #000;
+    }
+
+    /* Notes Area */
+    .notes-area {
+      display: none;
+      /* Hidden by default */
+      padding: 15px 20px 15px 40px;
+      background: #fafafa;
+      border-top: 1px dashed #f0f0f0;
+      border-bottom: 1px solid #eee;
+    }
+
+    .notes-area.open {
+      display: block;
+    }
+
+    textarea.note-editor {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 13px;
+      min-height: 60px;
+      resize: vertical;
+      box-sizing: border-box;
+      background: #fff;
+      color: #333;
+      margin-bottom: 10px;
+    }
+
+    textarea.note-editor:last-child {
+      margin-bottom: 0;
+    }
+
+    textarea.note-editor:focus {
+      border-color: #999;
+      outline: none;
+    }
+
+    /* Buttons */
+    button {
+      padding: 4px 10px;
+      cursor: pointer;
+      background: #fff;
+      color: #555;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 12px;
+    }
+
+    button:hover {
+      background: #eee;
+      color: #000;
+    }
+
+    button.danger {
+      color: #d93025;
+      border-color: #f2b2ae;
+    }
+
+    button.danger:hover {
+      background: #fce8e6;
+      border-color: #d93025;
+    }
+
+    .empty-state {
+      text-align: center;
+      color: #999;
+      padding: 40px;
+      font-style: italic;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>DeepOverlay Manager</h1>
+    <div class="header-actions">
+      <span id="storage-usage"
+        style="font-size: 13px; color: #666; display: flex; align-items: center; margin-right: 15px;">...</span>
+      <button id="refresh-btn">Refresh</button>
+      <button id="export-btn">Export Data</button>
+      <button id="clear-btn" class="danger">Clear Everything</button>
+    </div>
+  </header>
+
+  <input type="text" id="search-input" placeholder="Search pages or note content...">
+
+  <div id="dashboard-list">
+    <!-- Items injected here by JS -->
+    <div class="empty-state">Loading...</div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+
+</html>

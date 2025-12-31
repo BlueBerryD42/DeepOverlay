@@ -1,0 +1,13 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# JetBrains/Editor junk
+.idea/
+.vscode/
+
+# Build artifacts (if any in future)
+build/
+dist/
+*.pem
+*.crx

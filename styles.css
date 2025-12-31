@@ -1,0 +1,214 @@
+/* Font */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap');
+
+/* Container */
+#deep-overlay-root {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2147483647;
+  /* Max Z-Index */
+  pointer-events: none;
+  /* Pass-through when idle */
+  cursor: crosshair;
+  font-family: 'Roboto Mono', 'JetBrains Mono', monospace;
+}
+
+#deep-overlay-root.active {
+  pointer-events: auto;
+  /* CLEAN BACKGROUND - No dots */
+  background-color: transparent;
+}
+
+/* View Mode: Overlay allows click-through, but boxes intercept hover */
+.mode-view {
+  pointer-events: none !important;
+}
+
+.mode-view .deep-box {
+  pointer-events: auto !important;
+  cursor: help;
+  /* Indicate it's inspectable */
+}
+
+/* Edit Mode: Overlay blocks everything */
+.mode-edit {
+  pointer-events: auto !important;
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  /* Slight tint to indicate edit mode */
+}
+
+.mode-edit .deep-box {
+  cursor: grab;
+}
+
+/* Boxes */
+.deep-box {
+  position: absolute;
+  /* Thin, light box */
+  border: 1px solid rgba(0, 0, 0, 0.8);
+  background-color: transparent;
+  pointer-events: auto;
+  cursor: grab;
+  /* PERFORMANCE FIX: Do NOT transition width/height/top/left */
+  transition: background-color 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+
+/* Resize Handle */
+.deep-resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 15px;
+  height: 15px;
+  cursor: nwse-resize;
+  background: transparent;
+  z-index: 10;
+}
+
+.mode-edit .deep-resize-handle:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.deep-box:hover {
+  border-color: #000;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.deep-box.selected {
+  border: 1px solid #000;
+  /* Minimal indication of selection */
+  background-color: rgba(0, 0, 0, 0.05);
+  z-index: 1000;
+}
+
+/* HOVER TOOLTIP */
+.deep-box:hover::after {
+  content: attr(data-note);
+  position: absolute;
+  top: 100%;
+  /* Show BELOW the box to avoid top-edge clipping */
+  margin-top: 5px;
+  left: 0;
+  background: #fff;
+  color: #333;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  min-width: 150px;
+  z-index: 2147483647;
+  /* Ensure on top */
+  pointer-events: none;
+  border-radius: 4px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+  display: block;
+}
+
+/* Hide empty tooltips */
+.deep-box[data-note=""]:hover::after,
+.deep-box:not([data-note]):hover::after {
+  display: none;
+}
+
+/* Text Bubble */
+.deep-edit-bubble {
+  position: absolute;
+  background: #fff;
+  color: #333;
+  padding: 0;
+  border: 1px solid #ccc;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 200px;
+  overflow: hidden;
+}
+
+.deep-edit-bubble textarea {
+  background: #fff;
+  color: #333;
+  border: none;
+  padding: 10px;
+  min-height: 60px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.deep-edit-bubble .actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 5px;
+  background: #f9f9f9;
+  border-top: 1px solid #eee;
+  gap: 5px;
+}
+
+.deep-edit-bubble button {
+  background: transparent;
+  color: #555;
+  border: 1px solid transparent;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.deep-edit-bubble button:hover {
+  background: #eee;
+  color: #000;
+}
+
+.deep-edit-bubble button:last-child {
+  /* Save button */
+  background: #eee;
+  font-weight: bold;
+}
+
+/* Toolbar */
+#deep-toolbar {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: #fff;
+  color: #333;
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  border-radius: 30px;
+  /* Pill shape */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+#deep-toolbar span {
+  font-weight: normal;
+  font-size: 14px;
+  color: #555;
+}
+
+#deep-toolbar button {
+  background: transparent;
+  border: none;
+  color: #999;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+#deep-toolbar button:hover {
+  color: #000;
+}
