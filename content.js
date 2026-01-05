@@ -309,10 +309,74 @@
             e.stopPropagation();
             if (isEditMode && interactionMode === 'NONE') selectBox(box);
         });
+
+        // Tooltip events (JS-based for positioning)
+        box.addEventListener('mouseenter', () => showTooltip(box));
+        box.addEventListener('mouseleave', hideTooltip);
+        // Also hide on interaction begin to prevent stuck tooltips
+        box.addEventListener('mousedown', hideTooltip);
+
         if (!box.querySelector('.deep-resize-handle')) {
             const h = document.createElement('div');
             h.className = 'deep-resize-handle';
             box.appendChild(h);
+        }
+    }
+
+    let tooltipEl = null;
+
+    function showTooltip(box) {
+        if (isEditMode) return; // Don't show in edit mode
+        const note = box.dataset.note;
+        if (!note) return;
+
+        if (!tooltipEl) {
+            tooltipEl = document.createElement('div');
+            tooltipEl.className = 'deep-tooltip';
+            root.appendChild(tooltipEl);
+        }
+
+        tooltipEl.textContent = note;
+        tooltipEl.style.display = 'block';
+
+        requestAnimationFrame(() => {
+            const boxRect = box.getBoundingClientRect();
+            const tooltipRect = tooltipEl.getBoundingClientRect();
+            const viewportWidth = document.documentElement.clientWidth;
+            const viewportHeight = document.documentElement.clientHeight; // Exclude scrollbar
+
+            // Default: Bottom-Left aligned relative to box
+            let left = boxRect.left + window.scrollX;
+            let top = boxRect.bottom + window.scrollY + 5;
+
+            // 1. Horizontal Clamp
+            if (left + tooltipRect.width > window.scrollX + viewportWidth - 10) {
+                left = (window.scrollX + viewportWidth) - tooltipRect.width - 10;
+            }
+            if (left < window.scrollX + 10) {
+                left = window.scrollX + 10;
+            }
+
+            // 2. Vertical Flip
+            if (boxRect.bottom + 5 + tooltipRect.height > window.scrollY + viewportHeight - 10) {
+                top = boxRect.top + window.scrollY - tooltipRect.height - 5;
+            }
+
+            // 3. Top Safety
+            if (top < window.scrollY + 5) {
+                top = window.scrollY + 5;
+            }
+            // 4. Bottom clamp if still too low logic
+            // ...
+
+            tooltipEl.style.left = left + 'px';
+            tooltipEl.style.top = top + 'px';
+        });
+    }
+
+    function hideTooltip() {
+        if (tooltipEl) {
+            tooltipEl.style.display = 'none';
         }
     }
 
@@ -326,15 +390,16 @@
     function createBubble(box) {
         const bubble = document.createElement('div');
         bubble.className = 'deep-edit-bubble';
-        const rect = box.getBoundingClientRect();
-        bubble.style.left = (rect.left + window.scrollX) + 'px';
-        bubble.style.top = (rect.bottom + window.scrollY + 10) + 'px';
+
+        // Initial append to measure dimensions
+        // We need to append it to properly get dimensions, but we can hide it or pos offscreen first?
+        // Let's just append. It might flash in wrong spot for 1 frame but it's fast.
 
         const ta = document.createElement('textarea');
         ta.classList.add('deep-note-input');
         ta.placeholder = "Write a note...";
         ta.value = box.dataset.note || "";
-        ta.addEventListener('keydown', (e) => e.stopPropagation()); // Stop bubbling to page
+        ta.addEventListener('keydown', (e) => e.stopPropagation());
         ta.focus();
 
         const btn = document.createElement('button');
@@ -360,6 +425,55 @@
         bubble.appendChild(ta);
         bubble.appendChild(actions);
         root.appendChild(bubble);
+
+        // --- Positioning Logic with Boundary Detection ---
+        // Use requestAnimationFrame to ensure dimensions are ready
+        requestAnimationFrame(() => {
+            const rect = box.getBoundingClientRect();
+            const bubbleRect = bubble.getBoundingClientRect();
+            const viewportWidth = document.documentElement.clientWidth;
+            const viewportHeight = document.documentElement.clientHeight; // Exclude scrollbar
+
+            let left = rect.left + window.scrollX;
+            let top = rect.bottom + window.scrollY + 10;
+
+            // 1. Horizontal Clamp
+            // Check right edge
+            if (left + bubbleRect.width > window.scrollX + viewportWidth - 20) {
+                // Align to right edge of viewport usually better than just "shift"
+                // Or just shift enough to fit
+                left = (window.scrollX + viewportWidth) - bubbleRect.width - 20;
+            }
+            // Check left edge
+            if (left < window.scrollX + 20) {
+                left = window.scrollX + 20;
+            }
+
+            // 2. Vertical Flip
+            // Check bottom edge with buffer (20px)
+            // Use window.scrollY (page relative) comparison
+            // Condition: Bottom of bubble (top + height) > Screen Bottom (scrollY + viewportHeight)
+            if (top + bubbleRect.height > window.scrollY + viewportHeight - 20) {
+                // Flip to top
+                top = rect.top + window.scrollY - bubbleRect.height - 10;
+            }
+
+            // Safety against top edge
+            if (top < window.scrollY + 10) {
+                top = window.scrollY + 10;
+                // If that pushes it below again, we might need a "middle" or "force clamp".
+                // But usually flipping is better.
+            }
+
+            bubble.style.left = left + 'px';
+            bubble.style.top = top + 'px';
+
+            // Verify final position - if it's still cut off, we force it up
+            const finalRect = bubble.getBoundingClientRect(); // This might be stale until next frame, but...
+            // Actually, we just set the style.
+
+            ta.focus();
+        });
     }
 
     function saveAllBoxes() {

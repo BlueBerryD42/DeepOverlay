@@ -83,14 +83,9 @@
   z-index: 1000;
 }
 
-/* HOVER TOOLTIP */
-.deep-box:hover::after {
-  content: attr(data-note);
+/* JS-controlled Tooltip */
+.deep-tooltip {
   position: absolute;
-  top: 100%;
-  /* Show BELOW the box to avoid top-edge clipping */
-  margin-top: 5px;
-  left: 0;
   background: #fff;
   color: #333;
   padding: 6px 10px;
@@ -99,18 +94,13 @@
   line-height: 1.4;
   white-space: pre-wrap;
   min-width: 150px;
+  max-width: 300px;
   z-index: 2147483647;
-  /* Ensure on top */
   pointer-events: none;
   border-radius: 4px;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-  display: block;
-}
-
-/* Hide empty tooltips */
-.deep-box[data-note=""]:hover::after,
-.deep-box:not([data-note]):hover::after {
   display: none;
+  /* Controlled by JS */
 }
 
 /* Text Bubble */
