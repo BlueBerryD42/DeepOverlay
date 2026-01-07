@@ -6,14 +6,19 @@
   "permissions": [
     "activeTab",
     "storage",
-    "scripting"
+    "scripting",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://deep-overlay-backend-1074442805432.us-central1.run.app/*"
   ],
   "action": {
     "default_title": "DeepOverlay",
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "options_page": "options.html",
   "commands": {

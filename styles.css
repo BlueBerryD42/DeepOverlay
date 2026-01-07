@@ -46,8 +46,9 @@
 .deep-box {
   position: absolute;
   /* Thin, light box */
-  border: 1px solid rgba(0, 0, 0, 0.8);
-  background-color: transparent;
+  border: 1px solid var(--deep-border-color, rgba(0, 0, 0, 0.8));
+  /* Use a 20% tint of the selected color for background so it doesn't block text */
+  background-color: color-mix(in srgb, var(--deep-bg-color, transparent), transparent 80%);
   pointer-events: auto;
   cursor: grab;
   /* PERFORMANCE FIX: Do NOT transition width/height/top/left */
@@ -67,19 +68,15 @@
 }
 
 .mode-edit .deep-resize-handle:hover {
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--deep-border-color, rgba(0, 0, 0, 0.5));
 }
 
-.deep-box:hover {
-  border-color: #000;
-  box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
-  background-color: rgba(255, 255, 255, 0.2);
-}
 
 .deep-box.selected {
-  border: 1px solid #000;
-  /* Minimal indication of selection */
-  background-color: rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--deep-border-color, #000);
+  /* Slightly darker tint for selected */
+  background-color: color-mix(in srgb, var(--deep-bg-color, transparent), transparent 70%);
+  filter: brightness(0.9);
   z-index: 1000;
 }
 

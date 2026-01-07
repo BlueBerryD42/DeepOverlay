@@ -7,6 +7,7 @@ let allData = {}; // Cache
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
     loadDashboard();
+    initTheme();
 
     // Search Listener
     searchInput.addEventListener('input', (e) => {
@@ -17,7 +18,70 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('refresh-btn').onclick = loadDashboard;
     document.getElementById('export-btn').onclick = exportData;
     document.getElementById('clear-btn').onclick = clearAllData;
+    document.getElementById('theme-toggle').onclick = toggleTheme;
+
+    // Visual Settings Init
+    initVisualSettings();
 });
+
+// --- Visual Settings Logic ---
+function initVisualSettings() {
+    const optOpacity = document.getElementById('opt-opacity');
+    const valOpacity = document.getElementById('val-opacity');
+
+    const optBorder = document.getElementById('opt-border-color');
+    const optBg = document.getElementById('opt-bg-color');
+
+    // Load saved or defaults
+    chrome.storage.local.get(['overlay_opacity', 'overlay_border_color', 'overlay_bg_color'], (res) => {
+        const op = res.overlay_opacity || 1.0;
+        const borderColor = res.overlay_border_color || '#000000';
+        const bgColor = res.overlay_bg_color || '#ffffff';
+
+        optOpacity.value = op;
+        valOpacity.innerText = op;
+
+        optBorder.value = borderColor;
+        optBg.value = bgColor;
+    });
+
+    // Listeners
+    optOpacity.addEventListener('input', (e) => {
+        valOpacity.innerText = e.target.value;
+        chrome.storage.local.set({ overlay_opacity: e.target.value });
+    });
+
+    optBorder.addEventListener('input', (e) => {
+        chrome.storage.local.set({ overlay_border_color: e.target.value });
+    });
+
+    optBg.addEventListener('input', (e) => {
+        chrome.storage.local.set({ overlay_bg_color: e.target.value });
+    });
+}
+
+// --- Theme Logic ---
+function initTheme() {
+    chrome.storage.local.get('theme', (result) => {
+        // Default is dark (no attribute), so only set 'light' if explicit
+        if (result.theme === 'light') {
+            document.body.setAttribute('data-theme', 'light');
+        }
+    });
+}
+
+function toggleTheme() {
+    const isLight = document.body.getAttribute('data-theme') === 'light';
+    const newTheme = isLight ? 'dark' : 'light';
+
+    if (newTheme === 'light') {
+        document.body.setAttribute('data-theme', 'light');
+    } else {
+        document.body.removeAttribute('data-theme');
+    }
+
+    chrome.storage.local.set({ theme: newTheme });
+}
 
 // --- Core Logic ---
 function loadDashboard() {
@@ -38,6 +102,22 @@ function loadDashboard() {
 
         el.innerText = "Storage: " + text;
     });
+
+    // Update Cloud Usage Stats
+    chrome.storage.local.get("ocr_quota", (result) => {
+        const el = document.getElementById('usage-count');
+        if (!el) return;
+
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const data = result.ocr_quota || { count: 0, month: currentMonth };
+
+        // If stored data is from old month, display 0 (logic matches content.js)
+        let count = data.count;
+        if (data.month !== currentMonth) count = 0;
+
+        el.innerText = count;
+        if (count >= 1000) el.style.color = "#d93025"; // Red if limit hit
+    });
 }
 
 function renderDashboard(query = "") {
@@ -48,7 +128,14 @@ function renderDashboard(query = "") {
     const grouped = {}; // { "domain.com": [ {url, notes} ] }
 
     Object.keys(allData).forEach(url => {
-        const notes = allData[url] || [];
+        // Filter out non-URL keys (settings, quotas, etc.)
+        if (url === 'theme' || url === 'ocr_quota') return;
+
+        const val = allData[url];
+        // Valid notes data must be an array of objects
+        if (!Array.isArray(val)) return;
+
+        const notes = val;
 
         // Filter: Check if URL or Notes match query
         const matchesQuery = lowerQuery === "" ||

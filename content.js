@@ -91,6 +91,44 @@
                 sendResponse({ success: true });
             }
         });
+
+        // 7. Visual Settings
+        applyVisualSettings();
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area === 'local') {
+                if (changes.overlay_opacity || changes.overlay_border_color || changes.overlay_bg_color) {
+                    applyVisualSettings();
+                }
+            }
+        });
+    }
+
+    // --- Visual Settings ---
+    function applyVisualSettings() {
+        chrome.storage.local.get(['overlay_opacity', 'overlay_border_color', 'overlay_bg_color'], (res) => {
+            if (!root) return;
+            const op = res.overlay_opacity || 1.0;
+            const borderColor = res.overlay_border_color || '#000000';
+            const bgColor = res.overlay_bg_color || '#ffffff';
+
+            // Set CSS Variables for border and background colors (used in styles.css for .deep-box)
+            root.style.setProperty('--deep-border-color', borderColor);
+            root.style.setProperty('--deep-bg-color', bgColor);
+
+            // Apply opacity ONLY to the overlay boxes, not the root (to avoid affecting tooltips)
+            document.querySelectorAll('.deep-box').forEach(box => {
+                box.style.opacity = op;
+            });
+        });
+    }
+
+    // Helper to apply visual settings to a single box
+    function applyVisualSettingsToBox(box) {
+        chrome.storage.local.get(['overlay_opacity'], (res) => {
+            if (!box) return;
+            const op = res.overlay_opacity || 1.0;
+            box.style.opacity = op;
+        });
     }
 
     // --- Anchoring Logic ---
@@ -205,6 +243,9 @@
             activeBox.className = 'deep-box';
             activeBox.style.left = startX + 'px';
             activeBox.style.top = startY + 'px';
+
+            // Apply visual settings to new box
+            applyVisualSettingsToBox(activeBox);
 
             const handle = document.createElement('div');
             handle.className = 'deep-resize-handle';
@@ -391,9 +432,8 @@
         const bubble = document.createElement('div');
         bubble.className = 'deep-edit-bubble';
 
-        // Initial append to measure dimensions
-        // We need to append it to properly get dimensions, but we can hide it or pos offscreen first?
-        // Let's just append. It might flash in wrong spot for 1 frame but it's fast.
+        // Critical: Prevent root's onMouseDown from blocking interactions (selects/buttons)
+        bubble.addEventListener('mousedown', (e) => e.stopPropagation());
 
         const ta = document.createElement('textarea');
         ta.classList.add('deep-note-input');
@@ -401,6 +441,54 @@
         ta.value = box.dataset.note || "";
         ta.addEventListener('keydown', (e) => e.stopPropagation());
         ta.focus();
+
+        // Metadata / Status Bar
+        const metaBar = document.createElement('div');
+        metaBar.className = 'deep-meta-bar';
+        metaBar.style.display = 'none'; // Hidden until scan
+        metaBar.style.padding = '4px 8px';
+        metaBar.style.fontSize = '11px';
+        metaBar.style.color = '#555';
+        metaBar.style.borderTop = '1px solid #eee';
+        metaBar.style.background = '#fafafa';
+        metaBar.style.display = 'flex';
+        metaBar.style.justifyContent = 'space-between';
+        metaBar.style.flexWrap = 'wrap';
+        metaBar.style.gap = '4px';
+
+        // Options Bar (Orientation)
+        const optionsBar = document.createElement('div');
+        optionsBar.style.display = 'flex';
+        optionsBar.style.gap = '5px';
+        optionsBar.style.alignItems = 'center';
+
+        const langSelect = document.createElement('select');
+        langSelect.style.fontSize = '11px';
+        langSelect.style.border = '1px solid #ccc';
+        langSelect.style.borderRadius = '3px';
+        langSelect.style.padding = '2px';
+        langSelect.style.cursor = 'pointer';
+        langSelect.style.background = '#fff'; // Force white bg
+        langSelect.style.color = '#333';      // Force dark text
+        // Add Chinese options
+        langSelect.innerHTML = `
+            <option value="jpn_vert">JPN (Vert)</option>
+            <option value="jpn">JPN (Horz)</option>
+            <option value="chi">CHN</option>
+            <option value="chi_vert">CHN (Vert)</option>
+            <option value="eng">ENG</option>
+            <option value="kor">KOR</option>
+            <option value="kor_vert">KOR (Vert)</option>
+        `;
+
+        // Scan Button
+        const scanBtn = document.createElement('button');
+        scanBtn.innerText = "Scan";
+        scanBtn.title = "Extract text from image";
+        scanBtn.onclick = () => scanBox(box, ta, metaBar, langSelect.value);
+
+        optionsBar.appendChild(scanBtn);
+        optionsBar.appendChild(langSelect);
 
         const btn = document.createElement('button');
         btn.innerText = "Save";
@@ -420,60 +508,266 @@
 
         const actions = document.createElement('div');
         actions.className = 'actions';
-        actions.appendChild(delBtn);
-        actions.appendChild(btn);
+        actions.style.display = 'flex';
+        actions.style.justifyContent = 'space-between';
+        actions.style.alignItems = 'center';
+
+
+        const rightActions = document.createElement('div');
+        rightActions.style.display = 'flex';
+        rightActions.style.gap = '5px';
+        rightActions.appendChild(delBtn);
+        rightActions.appendChild(btn);
+
+        actions.appendChild(optionsBar);
+        actions.appendChild(rightActions);
+
         bubble.appendChild(ta);
+        bubble.appendChild(metaBar);
         bubble.appendChild(actions);
         root.appendChild(bubble);
 
         // --- Positioning Logic with Boundary Detection ---
-        // Use requestAnimationFrame to ensure dimensions are ready
         requestAnimationFrame(() => {
             const rect = box.getBoundingClientRect();
             const bubbleRect = bubble.getBoundingClientRect();
             const viewportWidth = document.documentElement.clientWidth;
-            const viewportHeight = document.documentElement.clientHeight; // Exclude scrollbar
+            const viewportHeight = document.documentElement.clientHeight;
 
             let left = rect.left + window.scrollX;
             let top = rect.bottom + window.scrollY + 10;
 
-            // 1. Horizontal Clamp
-            // Check right edge
             if (left + bubbleRect.width > window.scrollX + viewportWidth - 20) {
-                // Align to right edge of viewport usually better than just "shift"
-                // Or just shift enough to fit
                 left = (window.scrollX + viewportWidth) - bubbleRect.width - 20;
             }
-            // Check left edge
             if (left < window.scrollX + 20) {
                 left = window.scrollX + 20;
             }
 
-            // 2. Vertical Flip
-            // Check bottom edge with buffer (20px)
-            // Use window.scrollY (page relative) comparison
-            // Condition: Bottom of bubble (top + height) > Screen Bottom (scrollY + viewportHeight)
             if (top + bubbleRect.height > window.scrollY + viewportHeight - 20) {
-                // Flip to top
                 top = rect.top + window.scrollY - bubbleRect.height - 10;
             }
 
-            // Safety against top edge
             if (top < window.scrollY + 10) {
                 top = window.scrollY + 10;
-                // If that pushes it below again, we might need a "middle" or "force clamp".
-                // But usually flipping is better.
             }
 
             bubble.style.left = left + 'px';
             bubble.style.top = top + 'px';
 
-            // Verify final position - if it's still cut off, we force it up
-            const finalRect = bubble.getBoundingClientRect(); // This might be stale until next frame, but...
-            // Actually, we just set the style.
-
             ta.focus();
         });
+    }
+
+    async function scanBox(box, textarea, metaBar, lang) {
+
+        // --- 1. Client-Side Counter Check ---
+        const quotaKey = "ocr_quota";
+        const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+        const quotaData = await chrome.storage.local.get(quotaKey);
+        let usage = quotaData[quotaKey] || { count: 0, month: currentMonth };
+
+        if (usage.month !== currentMonth) {
+            usage = { count: 0, month: currentMonth }; // Reset new month
+        }
+
+        if (usage.count >= 1000) {
+            alert("Monthly Free OCR Limit (1000) Reached. Please wait until next month.");
+            metaBar.innerHTML = `<span style="color:red">Limit Reached (1000/1000)</span>`;
+            return;
+        }
+
+        // --- 2. Prepare Scan ---
+        metaBar.style.display = 'flex';
+        metaBar.innerHTML = '<span>Scanning...</span>';
+
+        try {
+            const response = await chrome.runtime.sendMessage({ action: "CAPTURE_VISIBLE_TAB" });
+            if (response.error || !response.dataUrl) {
+                throw new Error(response.error || "Capture failed");
+            }
+
+            const image = new Image();
+            image.onload = async () => {
+                const canvas = document.createElement('canvas');
+                const boxRect = box.getBoundingClientRect();
+                const dpr = window.devicePixelRatio || 1;
+                canvas.width = boxRect.width * dpr;
+                canvas.height = boxRect.height * dpr;
+
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(image,
+                    boxRect.left * dpr, boxRect.top * dpr, boxRect.width * dpr, boxRect.height * dpr,
+                    0, 0, canvas.width, canvas.height
+                );
+
+                const cropUrl = canvas.toDataURL('image/png');
+
+                // Show Preview Link
+                metaBar.innerHTML = `
+                    <span>Scanning...</span>
+                    <a href="#" style="color:#2196f3; font-size:10px" id="deep-preview-link">View Image</a>
+                `;
+                setTimeout(() => {
+                    const lnk = metaBar.querySelector('#deep-preview-link');
+                    if (lnk) lnk.onclick = (e) => {
+                        e.preventDefault();
+                        const win = window.open("", "Preview", "width=400,height=400");
+                        if (win) {
+                            win.document.body.innerHTML = '';
+                            win.document.write(`<img src="${cropUrl}" style="border:1px solid red; max-width:100%"/>`);
+                            win.document.close();
+                        }
+                    };
+                }, 0);
+
+                // --- 3. Recognize (Cloud Vision API) ---
+                // Expecting { result: { fullTextAnnotation: ... } } or { text: ... } or { error: ... }
+                const responseData = await chrome.runtime.sendMessage({
+                    action: "PERFORM_OCR",
+                    image: cropUrl
+                });
+
+                if (responseData.error) throw new Error(responseData.error);
+
+                // --- 4. Increment Usage ---
+                usage.count++;
+                chrome.storage.local.set({ [quotaKey]: usage });
+
+                // --- 5. Process & Sort Text ---
+                const rawResult = responseData.result || {};
+                const isVertical = lang.includes("vert"); // e.g. "jpn_vert", "chi_sim_vert"
+
+                const finalText = processOCRResult(rawResult, isVertical);
+
+                // --- 6. Update UI ---
+                let confColor = '#388e3c'; // Green since Cloud is reliable
+
+                try {
+                    await navigator.clipboard.writeText(finalText.trim());
+                    // Success UI
+                    metaBar.innerHTML = `
+                        <span style="display:flex; align-items:center; gap:4px">
+                            <span style="color:${confColor}; font-weight:bold">OK</span>
+                            <span style="color:#999; font-size:10px">${usage.count}/1000</span>
+                        </span>
+                        <a href="#" style="color:#2196f3; font-size:10px; margin-left:5px" id="deep-preview-link-done">Img</a>
+                        <span style="color:#388e3c; font-weight:bold; margin-left:auto">Copied!</span>
+                    `;
+                } catch (err) {
+                    console.warn("Auto-copy failed (focus lost?), showing manual button", err);
+                    // Fail UI (Manual Copy Button)
+                    metaBar.innerHTML = `
+                        <span style="display:flex; align-items:center; gap:4px">
+                            <span style="color:${confColor}; font-weight:bold">OK</span>
+                            <span style="color:#999; font-size:10px">${usage.count}/1000</span>
+                        </span>
+                        <a href="#" style="color:#2196f3; font-size:10px; margin-left:5px" id="deep-preview-link-done">Img</a>
+                        <button id="deep-manual-copy" style="margin-left:auto; border:1px solid #ccc; background:#fff; cursor:pointer; font-size:10px; padding:2px 6px;">Copy</button>
+                    `;
+
+                    setTimeout(() => {
+                        const copyBtn = metaBar.querySelector('#deep-manual-copy');
+                        if (copyBtn) {
+                            copyBtn.onclick = () => {
+                                navigator.clipboard.writeText(finalText.trim());
+                                copyBtn.innerText = "Copied!";
+                                copyBtn.style.color = "#388e3c";
+                            };
+                        }
+                    }, 0);
+                }
+
+                setTimeout(() => {
+                    const lnk = metaBar.querySelector('#deep-preview-link-done');
+                    if (lnk) lnk.onclick = (e) => {
+                        e.preventDefault();
+                        const win = window.open("", "Preview", "width=400,height=400");
+                        if (win) {
+                            win.document.body.innerHTML = '';
+                            win.document.write(`<img src="${cropUrl}" style="border:1px solid red; max-width:100%"/>`);
+                            win.document.close();
+                        }
+                    };
+                }, 0);
+
+            };
+            image.src = response.dataUrl;
+
+        } catch (e) {
+            console.error(e);
+            metaBar.innerHTML = `<span style="color:red">Error: ${e.message}</span>`;
+        }
+    }
+
+    // --- Helper: Vertical Layout Sorting ---
+    // --- Helper: Vertical Layout Sorting (Right-to-Left Columns) ---
+    function processOCRResult(result, isVertical) {
+        // Backup for simple text result (fallback)
+        if (!result || !result.fullTextAnnotation || !result.fullTextAnnotation.pages) {
+            return result.text || (result.fullTextAnnotation ? result.fullTextAnnotation.text : "") || "";
+        }
+
+        if (!isVertical) {
+            return result.fullTextAnnotation.text; // Default L-R Reading
+        }
+
+        // 1. Flatten into text blocks with centers
+        const blocks = [];
+        const pages = result.fullTextAnnotation.pages || [];
+
+        pages.forEach(page => {
+            (page.blocks || []).forEach(block => {
+                let blockText = "";
+
+                (block.paragraphs || []).forEach(para => {
+                    (para.words || []).forEach(word => {
+                        (word.symbols || []).forEach(sym => {
+                            blockText += sym.text;
+                            // Add newlines only if explicit break
+                            const t = sym.property?.detectedBreak?.type;
+                            if (t === 'EOL_SURE_SPACE' || t === 'LINE_BREAK') blockText += "\n";
+                        });
+                    });
+                });
+
+                blockText = blockText.trim();
+                if (!blockText) return;
+
+                // Geometry
+                const verts = block.boundingBox.vertices;
+                const xs = verts.map(v => v.x || 0);
+                const ys = verts.map(v => v.y || 0);
+                const minX = Math.min(...xs), maxX = Math.max(...xs);
+                const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+                blocks.push({
+                    text: blockText,
+                    x: (minX + maxX) / 2, // Center X
+                    y: (minY + maxY) / 2  // Center Y
+                });
+            });
+        });
+
+        if (blocks.length === 0) return "";
+
+        // 2. Sort R->L (Columns), then Top->Bottom
+        // Heuristic: Group by Columns (X-position)
+        // Sort blocks by Right Edge Descending (Right -> Left)
+
+        blocks.sort((a, b) => {
+            const xDiff = Math.abs(a.x - b.x);
+            // Column threshold: if centers are close, they are in same vertical column.
+            const colThresh = 50;
+
+            if (xDiff < colThresh) {
+                return a.y - b.y; // Same column: Top -> Bottom
+            } else {
+                return b.x - a.x; // Different column: Right -> Left
+            }
+        });
+
+        return blocks.map(b => b.text).join("\n\n");
     }
 
     function saveAllBoxes() {
@@ -520,10 +814,14 @@
                 }
 
                 setupBoxEvents(b);
+                // Apply visual settings to loaded box
+                applyVisualSettingsToBox(b);
                 root.appendChild(b);
             });
             // Initial position update
             updateBoxPositions();
+            // Ensure all boxes have visual settings applied
+            applyVisualSettings();
         });
     }
 
