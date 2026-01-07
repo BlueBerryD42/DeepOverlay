@@ -9,6 +9,7 @@ Thumbs.db
 # Build artifacts (if any in future)
 build/
 dist/
+.vite/
 *.pem
 *.crx
 .env

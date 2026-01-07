@@ -12,6 +12,16 @@
     let initialLeft, initialTop, initialWidth, initialHeight;
     let isDrawing = false;
 
+    // Image Selection State
+    let imageSelectionMode = false; // Separate from isEditMode
+    let selectedImages = new Map(); // Map<imageElement, {overlayContainer, resizeObserver, lastPosition}>
+    let hoveredImage = null; // Currently hovered image element
+    let imageResizeObservers = new Map(); // Map<imageElement, ResizeObserver>
+    
+    // Position tracking for dynamic layout changes
+    let positionCheckInterval = null;
+    let lastPositionCheckTime = 0;
+
     // --- Init ---
     function init() {
         root = document.createElement('div');
@@ -23,6 +33,9 @@
         // Initial setup
         checkUrlChange();
         setEditMode(false);
+        
+        // Image selection mode setup
+        setupImageSelection();
 
         // --- Event Listeners ---
 
@@ -32,6 +45,11 @@
             if (isEditMode) {
                 // Allow interaction with our own UI (root and children)
                 if (root.contains(e.target)) return;
+                
+                // Allow clicks on images when in image selection mode
+                if (imageSelectionMode && e.target.tagName === 'IMG') {
+                    return; // Let handleImageClick handle it
+                }
 
                 e.stopPropagation();
                 e.stopImmediatePropagation();
@@ -41,6 +59,11 @@
 
         root.addEventListener('click', (e) => {
             if (isEditMode) {
+                // Allow clicks on images when in image selection mode
+                if (imageSelectionMode && e.target.tagName === 'IMG') {
+                    return; // Let handleImageClick handle it
+                }
+                
                 // If clicking root background (not box/handle), stop it
                 if (e.target === root) {
                     e.stopPropagation();
@@ -73,12 +96,37 @@
 
         // 4. Responsive Updates
         // Update positions whenever the page changes layout (resize, scroll, etc)
-        window.addEventListener('resize', requestUpdate);
-        window.addEventListener('scroll', requestUpdate, true); // Capture globally
+        window.addEventListener('resize', () => {
+            requestUpdate();
+            updateImageOverlayPositions();
+        });
+        window.addEventListener('scroll', () => {
+            requestUpdate();
+            updateImageOverlayPositions();
+        }, true); // Capture globally
 
         // 5. App Navigation
         setInterval(checkUrlChange, 1000);
         window.addEventListener('popstate', checkUrlChange);
+        
+        // 5.5. Layout change detection (MutationObserver for dynamic layouts)
+        setupLayoutChangeDetection();
+        
+        // 5.5. Page Load Events - Reload boxes after page/images are fully loaded
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                // Wait a bit for images to start loading
+                setTimeout(() => loadBoxes(), 100);
+            });
+        } else {
+            // DOM already loaded, but images might still be loading
+            setTimeout(() => loadBoxes(), 100);
+        }
+        
+        // Also reload boxes when window fully loads (including images)
+        window.addEventListener('load', () => {
+            setTimeout(() => loadBoxes(), 200);
+        });
 
         // 6. Messages
         chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -174,7 +222,19 @@
         root.style.width = Math.max(document.documentElement.scrollWidth, window.innerWidth) + 'px';
         root.style.height = Math.max(document.documentElement.scrollHeight, window.innerHeight) + 'px';
 
+        // First, update all image overlay container positions
+        selectedImages.forEach((containerData, img) => {
+            if (containerData.overlayContainer && isImageVisible(img)) {
+                updateImageOverlayPosition(containerData.overlayContainer, img);
+                updateBoxesInOverlay(containerData.overlayContainer, img);
+            }
+        });
+
+        // Then update boxes that are anchored to generic elements (not in image overlays)
         document.querySelectorAll('.deep-box').forEach(box => {
+            // Skip boxes that are in image overlays (they're handled above)
+            if (box.closest('.deep-image-overlay')) return;
+            
             if (box.dataset.anchorSelector) {
                 try {
                     const anchor = document.querySelector(box.dataset.anchorSelector);
@@ -218,6 +278,18 @@
         if (!isEditMode) return;
         if (e.target.tagName !== 'TEXTAREA') e.preventDefault();
 
+        // If clicking on an image in selection mode, let handleImageClick handle it
+        if (imageSelectionMode && e.target.tagName === 'IMG') {
+            return; // Let handleImageClick handle it
+        }
+        
+        // If in image selection mode but no images selected yet, don't allow drawing
+        if (imageSelectionMode && selectedImages.size === 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+
         const pageX = e.pageX;
         const pageY = e.pageY;
 
@@ -231,33 +303,105 @@
         } else if (e.target.classList.contains('deep-box')) {
             interactionMode = 'MOVE';
             activeBox = e.target;
-            startX = pageX; startY = pageY;
-            initialLeft = parseInt(activeBox.style.left);
-            initialTop = parseInt(activeBox.style.top);
+            const overlayContainer = activeBox.closest('.deep-image-overlay');
+            if (overlayContainer) {
+                // Box is in an overlay - use relative coordinates
+                const overlayRect = overlayContainer.getBoundingClientRect();
+                startX = e.clientX - overlayRect.left;
+                startY = e.clientY - overlayRect.top;
+            } else {
+                // Box is in root - use page coordinates
+                startX = pageX;
+                startY = pageY;
+            }
+            initialLeft = parseInt(activeBox.style.left) || 0;
+            initialTop = parseInt(activeBox.style.top) || 0;
             e.stopPropagation();
-        } else if (e.target === root) {
-            interactionMode = 'DRAW';
-            startX = pageX; startY = pageY;
+        } else if (e.target === root || e.target.classList.contains('deep-image-overlay')) {
+            // Only allow drawing if we have selected images and clicking on their overlay
+            if (imageSelectionMode && selectedImages.size === 0) {
+                // In image selection mode but no images selected - don't draw
+                return;
+            }
+            
+            // Find which image overlay we're clicking on
+            let targetOverlay = e.target.classList.contains('deep-image-overlay') 
+                ? e.target 
+                : e.target.closest('.deep-image-overlay');
+            
+            if (targetOverlay && imageSelectionMode) {
+                // Drawing within an image overlay - use percentage coordinates
+                interactionMode = 'DRAW';
+                const overlayRect = targetOverlay.getBoundingClientRect();
+                const img = findImageForOverlay(targetOverlay);
+                if (!img) return;
+                
+                const imgRect = img.getBoundingClientRect();
+                const relX = e.clientX - overlayRect.left;
+                const relY = e.clientY - overlayRect.top;
+                
+                // Calculate percentage positions
+                const percentLeft = relX / imgRect.width;
+                const percentTop = relY / imgRect.height;
+                
+                startX = relX;
+                startY = relY;
 
-            activeBox = document.createElement('div');
-            activeBox.className = 'deep-box';
-            activeBox.style.left = startX + 'px';
-            activeBox.style.top = startY + 'px';
+                activeBox = document.createElement('div');
+                activeBox.className = 'deep-box';
+                activeBox.style.left = relX + 'px';
+                activeBox.style.top = relY + 'px';
+                
+                // Store percentage values for responsive positioning
+                activeBox.dataset.percentLeft = percentLeft;
+                activeBox.dataset.percentTop = percentTop;
+                activeBox.dataset.imageSelector = targetOverlay.dataset.imageSelector;
 
-            // Apply visual settings to new box
-            applyVisualSettingsToBox(activeBox);
+                // Apply visual settings to new box
+                applyVisualSettingsToBox(activeBox);
 
-            const handle = document.createElement('div');
-            handle.className = 'deep-resize-handle';
-            activeBox.appendChild(handle);
-            root.appendChild(activeBox);
+                const handle = document.createElement('div');
+                handle.className = 'deep-resize-handle';
+                activeBox.appendChild(handle);
+                targetOverlay.appendChild(activeBox);
+            } else if (e.target === root && !imageSelectionMode) {
+                // Original behavior: drawing on root
+                interactionMode = 'DRAW';
+                startX = pageX; startY = pageY;
+
+                activeBox = document.createElement('div');
+                activeBox.className = 'deep-box';
+                activeBox.style.left = startX + 'px';
+                activeBox.style.top = startY + 'px';
+
+                // Apply visual settings to new box
+                applyVisualSettingsToBox(activeBox);
+
+                const handle = document.createElement('div');
+                handle.className = 'deep-resize-handle';
+                activeBox.appendChild(handle);
+                root.appendChild(activeBox);
+            }
         }
     }
 
     function onMouseMove(e) {
         if (interactionMode === 'NONE') return;
-        const currentX = e.pageX;
-        const currentY = e.pageY;
+        
+        // Check if we're working within an image overlay
+        const overlayContainer = activeBox?.closest('.deep-image-overlay');
+        let currentX, currentY;
+        
+        if (overlayContainer && interactionMode === 'DRAW') {
+            // For drawing in image overlay, use relative coordinates
+            const overlayRect = overlayContainer.getBoundingClientRect();
+            currentX = e.clientX - overlayRect.left;
+            currentY = e.clientY - overlayRect.top;
+        } else {
+            // Use page coordinates for root-level operations
+            currentX = e.pageX;
+            currentY = e.pageY;
+        }
 
         if (interactionMode === 'DRAW') {
             const width = Math.abs(currentX - startX);
@@ -266,12 +410,67 @@
             activeBox.style.height = height + 'px';
             activeBox.style.left = Math.min(currentX, startX) + 'px';
             activeBox.style.top = Math.min(currentY, startY) + 'px';
+            
+            // Update percentage values if box is in an image overlay
+            const overlayContainer = activeBox.closest('.deep-image-overlay');
+            if (overlayContainer && activeBox.dataset.imageSelector) {
+                const img = findImageForOverlay(overlayContainer);
+                if (img) {
+                    const imgRect = img.getBoundingClientRect();
+                    const percentLeft = parseFloat(activeBox.style.left) / imgRect.width;
+                    const percentTop = parseFloat(activeBox.style.top) / imgRect.height;
+                    const percentWidth = parseFloat(activeBox.style.width) / imgRect.width;
+                    const percentHeight = parseFloat(activeBox.style.height) / imgRect.height;
+                    
+                    activeBox.dataset.percentLeft = percentLeft;
+                    activeBox.dataset.percentTop = percentTop;
+                    activeBox.dataset.percentWidth = percentWidth;
+                    activeBox.dataset.percentHeight = percentHeight;
+                }
+            }
         } else if (interactionMode === 'MOVE') {
-            activeBox.style.left = (initialLeft + (currentX - startX)) + 'px';
-            activeBox.style.top = (initialTop + (currentY - startY)) + 'px';
+            // For move, check if box is in an overlay
+            if (overlayContainer) {
+                const overlayRect = overlayContainer.getBoundingClientRect();
+                const relX = e.clientX - overlayRect.left;
+                const relY = e.clientY - overlayRect.top;
+                const newLeft = initialLeft + (relX - startX);
+                const newTop = initialTop + (relY - startY);
+                activeBox.style.left = newLeft + 'px';
+                activeBox.style.top = newTop + 'px';
+                
+                // Update percentage values
+                const img = findImageForOverlay(overlayContainer);
+                if (img && activeBox.dataset.imageSelector) {
+                    const imgRect = img.getBoundingClientRect();
+                    activeBox.dataset.percentLeft = newLeft / imgRect.width;
+                    activeBox.dataset.percentTop = newTop / imgRect.height;
+                }
+            } else {
+                activeBox.style.left = (initialLeft + (currentX - startX)) + 'px';
+                activeBox.style.top = (initialTop + (currentY - startY)) + 'px';
+            }
         } else if (interactionMode === 'RESIZE') {
-            activeBox.style.width = Math.max(20, initialWidth + (currentX - startX)) + 'px';
-            activeBox.style.height = Math.max(20, initialHeight + (currentY - startY)) + 'px';
+            if (overlayContainer) {
+                const overlayRect = overlayContainer.getBoundingClientRect();
+                const relX = e.clientX - overlayRect.left;
+                const relY = e.clientY - overlayRect.top;
+                const newWidth = Math.max(20, initialWidth + (relX - startX));
+                const newHeight = Math.max(20, initialHeight + (relY - startY));
+                activeBox.style.width = newWidth + 'px';
+                activeBox.style.height = newHeight + 'px';
+                
+                // Update percentage values
+                const img = findImageForOverlay(overlayContainer);
+                if (img && activeBox.dataset.imageSelector) {
+                    const imgRect = img.getBoundingClientRect();
+                    activeBox.dataset.percentWidth = newWidth / imgRect.width;
+                    activeBox.dataset.percentHeight = newHeight / imgRect.height;
+                }
+            } else {
+                activeBox.style.width = Math.max(20, initialWidth + (currentX - startX)) + 'px';
+                activeBox.style.height = Math.max(20, initialHeight + (currentY - startY)) + 'px';
+            }
         }
     }
 
@@ -282,6 +481,22 @@
             activeBox.remove();
             interactionMode = 'NONE';
             return;
+        }
+
+        // Ensure percentage values are calculated for boxes in image overlays
+        const overlayContainer = activeBox?.closest('.deep-image-overlay');
+        if (overlayContainer && activeBox.dataset.imageSelector) {
+            const img = findImageForOverlay(overlayContainer);
+            if (img) {
+                const imgRect = img.getBoundingClientRect();
+                const boxRect = activeBox.getBoundingClientRect();
+                
+                // Calculate and store final percentage values
+                activeBox.dataset.percentLeft = ((boxRect.left - imgRect.left) / imgRect.width);
+                activeBox.dataset.percentTop = ((boxRect.top - imgRect.top) / imgRect.height);
+                activeBox.dataset.percentWidth = (boxRect.width / imgRect.width);
+                activeBox.dataset.percentHeight = (boxRect.height / imgRect.height);
+            }
         }
 
         if (interactionMode === 'DRAW') {
@@ -297,6 +512,35 @@
 
     // Find the element below the box and attach logic
     function calculateAnchors(box) {
+        // Check if box is in an image overlay - if so, anchor to the image
+        const overlayContainer = box.closest('.deep-image-overlay');
+        if (overlayContainer && box.dataset.imageSelector) {
+            const img = findImageForOverlay(overlayContainer);
+            if (img) {
+                // Box is anchored to an image - use percentage-based positioning
+                const imgRect = img.getBoundingClientRect();
+                const boxRect = box.getBoundingClientRect();
+                
+                // Calculate percentage positions relative to image
+                const percentLeft = (boxRect.left - imgRect.left) / imgRect.width;
+                const percentTop = (boxRect.top - imgRect.top) / imgRect.height;
+                const percentWidth = boxRect.width / imgRect.width;
+                const percentHeight = boxRect.height / imgRect.height;
+                
+                // Store image selector and percentages
+                box.dataset.imageSelector = overlayContainer.dataset.imageSelector;
+                box.dataset.percentLeft = percentLeft;
+                box.dataset.percentTop = percentTop;
+                box.dataset.percentWidth = percentWidth;
+                box.dataset.percentHeight = percentHeight;
+                
+                // Also store image src for reference
+                box.dataset.imageSrc = img.src || '';
+                return;
+            }
+        }
+        
+        // Original behavior: anchor to generic element (for boxes not in image overlays)
         // 1. Measure Box FIRST (while visible)
         const rect = box.getBoundingClientRect();
         const centerX = rect.left + rect.width / 2;
@@ -772,27 +1016,241 @@
 
     function saveAllBoxes() {
         if (!chrome.runtime?.id) return;
-        const boxes = [];
-        document.querySelectorAll('.deep-box').forEach(b => {
-            boxes.push({
-                l: b.style.left, t: b.style.top,
-                w: b.style.width, h: b.style.height,
-                note: b.dataset.note || "",
-                // Save Anchor Data
-                anchor: b.dataset.anchorSelector || null,
-                rX: b.dataset.rX || 0,
-                rY: b.dataset.rY || 0,
-                rW: b.dataset.rW || null,
-                rH: b.dataset.rH || null
+        
+        const currentUrl = window.location.href;
+        const workData = extractWorkId(currentUrl);
+        const storageKey = getStorageKey(currentUrl);
+        const pageUrl = getCurrentPageUrl();
+        const timestamp = Date.now();
+        
+        // Get or create work entry
+        chrome.storage.local.get([storageKey], (result) => {
+            let workEntry = result[storageKey] || {
+                workId: workData.workId,
+                site: workData.site,
+                baseUrl: workData.normalizedUrl,
+                images: {},
+                metadata: {
+                    firstSeen: timestamp,
+                    lastUpdated: timestamp,
+                    urlVariants: []
+                }
+            };
+            
+            // Update metadata
+            workEntry.metadata.lastUpdated = timestamp;
+            if (!workEntry.metadata.urlVariants.includes(currentUrl)) {
+                workEntry.metadata.urlVariants.push(currentUrl);
+            }
+            
+            // Collect boxes grouped by image
+            const imageBoxes = new Map(); // Map<imageSelector, boxes[]>
+            
+            // First, collect boxes from image overlays
+            selectedImages.forEach((containerData, img) => {
+                const selector = containerData.overlayContainer.dataset.imageSelector;
+                if (!selector) return;
+                
+                const boxes = [];
+                containerData.overlayContainer.querySelectorAll('.deep-box').forEach(box => {
+                    boxes.push({
+                        percentLeft: parseFloat(box.dataset.percentLeft) || 0,
+                        percentTop: parseFloat(box.dataset.percentTop) || 0,
+                        percentWidth: parseFloat(box.dataset.percentWidth) || 0,
+                        percentHeight: parseFloat(box.dataset.percentHeight) || 0,
+                        note: box.dataset.note || "",
+                        imageSelector: selector,
+                        imageSrc: box.dataset.imageSrc || img.src || ""
+                    });
+                });
+                
+                if (boxes.length > 0) {
+                    imageBoxes.set(selector, {
+                        selector: selector,
+                        src: img.src || "",
+                        pageUrl: pageUrl,
+                        boxes: boxes
+                    });
+                }
             });
+            
+            // Also collect boxes not in image overlays (legacy support)
+            document.querySelectorAll('.deep-box').forEach(box => {
+                if (box.closest('.deep-image-overlay')) return; // Already handled
+                
+                // For legacy boxes, try to find if they're near an image
+                const boxRect = box.getBoundingClientRect();
+                const centerX = boxRect.left + boxRect.width / 2;
+                const centerY = boxRect.top + boxRect.height / 2;
+                
+                // Find nearest image
+                let nearestImg = null;
+                let minDist = Infinity;
+                document.querySelectorAll('img').forEach(img => {
+                    if (!isImageVisible(img)) return;
+                    const imgRect = img.getBoundingClientRect();
+                    const dist = Math.sqrt(
+                        Math.pow(centerX - (imgRect.left + imgRect.width/2), 2) +
+                        Math.pow(centerY - (imgRect.top + imgRect.height/2), 2)
+                    );
+                    if (dist < minDist && dist < Math.max(imgRect.width, imgRect.height)) {
+                        minDist = dist;
+                        nearestImg = img;
+                    }
+                });
+                
+                if (nearestImg) {
+                    const selector = getUniqueSelector(nearestImg);
+                    if (selector) {
+                        const imgRect = nearestImg.getBoundingClientRect();
+                        if (!imageBoxes.has(selector)) {
+                            imageBoxes.set(selector, {
+                                selector: selector,
+                                src: nearestImg.src || "",
+                                pageUrl: pageUrl,
+                                boxes: []
+                            });
+                        }
+                        
+                        const percentLeft = (boxRect.left - imgRect.left) / imgRect.width;
+                        const percentTop = (boxRect.top - imgRect.top) / imgRect.height;
+                        const percentWidth = boxRect.width / imgRect.width;
+                        const percentHeight = boxRect.height / imgRect.height;
+                        
+                        imageBoxes.get(selector).boxes.push({
+                            percentLeft: percentLeft,
+                            percentTop: percentTop,
+                            percentWidth: percentWidth,
+                            percentHeight: percentHeight,
+                            note: box.dataset.note || "",
+                            imageSelector: selector,
+                            imageSrc: nearestImg.src || ""
+                        });
+                    }
+                }
+            });
+            
+            // Update work entry with image data
+            imageBoxes.forEach((imageData, selector) => {
+                workEntry.images[selector] = imageData;
+            });
+            
+            // Save to storage
+            const data = {};
+            data[storageKey] = workEntry;
+            chrome.storage.local.set(data);
         });
-        const data = {};
-        data[getUrl()] = boxes;
-        chrome.storage.local.set(data);
     }
 
-    function loadBoxes() {
+    function loadBoxes(retryCount = 0) {
         if (!chrome.runtime?.id) return;
+        
+        const currentUrl = window.location.href;
+        const storageKey = getStorageKey(currentUrl);
+        const pageUrl = getCurrentPageUrl();
+        
+        chrome.storage.local.get([storageKey], (result) => {
+            if (chrome.runtime.lastError) return;
+            
+            const workEntry = result[storageKey];
+            if (!workEntry || !workEntry.images) {
+                // Try legacy format for backward compatibility
+                loadLegacyBoxes();
+                return;
+            }
+            
+            let loadedAny = false;
+            const missingSelectors = [];
+            
+            // Filter images by pageUrl - only load boxes for current page
+            Object.keys(workEntry.images).forEach(selector => {
+                const imageData = workEntry.images[selector];
+                
+                // Only load if this image is on the current page
+                if (imageData.pageUrl !== pageUrl) return;
+                
+                // Try to find the image in the DOM
+                let img;
+                try {
+                    img = document.querySelector(selector);
+                } catch (e) {
+                    missingSelectors.push(selector);
+                    return; // Invalid selector
+                }
+                
+                if (!img || img.tagName !== 'IMG' || !isImageVisible(img)) {
+                    missingSelectors.push(selector);
+                    return; // Image not found or not visible
+                }
+                
+                loadedAny = true;
+                
+                // Select the image and create overlay container
+                if (!selectedImages.has(img)) {
+                    img.classList.add('deep-image-selected');
+                    const containerData = createImageOverlayContainer(img);
+                    selectedImages.set(img, containerData);
+                }
+                
+                const overlayContainer = selectedImages.get(img).overlayContainer;
+                
+                // Load boxes for this image
+                imageData.boxes.forEach(boxData => {
+                    const box = document.createElement('div');
+                    box.className = 'deep-box';
+                    box.dataset.note = boxData.note || "";
+                    box.dataset.imageSelector = selector;
+                    box.dataset.imageSrc = boxData.imageSrc || imageData.src || "";
+                    
+                    // Store percentage values
+                    box.dataset.percentLeft = boxData.percentLeft;
+                    box.dataset.percentTop = boxData.percentTop;
+                    box.dataset.percentWidth = boxData.percentWidth;
+                    box.dataset.percentHeight = boxData.percentHeight;
+                    
+                    // Calculate initial pixel positions from percentages
+                    const imgRect = img.getBoundingClientRect();
+                    box.style.left = (imgRect.width * boxData.percentLeft) + 'px';
+                    box.style.top = (imgRect.height * boxData.percentTop) + 'px';
+                    box.style.width = (imgRect.width * boxData.percentWidth) + 'px';
+                    box.style.height = (imgRect.height * boxData.percentHeight) + 'px';
+                    
+                    setupBoxEvents(box);
+                    applyVisualSettingsToBox(box);
+                    
+                    // Add resize handle
+                    if (!box.querySelector('.deep-resize-handle')) {
+                        const handle = document.createElement('div');
+                        handle.className = 'deep-resize-handle';
+                        box.appendChild(handle);
+                    }
+                    
+                    overlayContainer.appendChild(box);
+                });
+            });
+            
+            // If some images weren't found and we haven't retried too many times, retry
+            if (missingSelectors.length > 0 && retryCount < 10) {
+                // Retry after a delay, with exponential backoff
+                const delay = Math.min(100 * Math.pow(1.5, retryCount), 2000);
+                setTimeout(() => {
+                    loadBoxes(retryCount + 1);
+                }, delay);
+            }
+            
+            // Initial position update
+            if (loadedAny) {
+                updateBoxPositions();
+                applyVisualSettings();
+            }
+            
+            // Always update UI to reflect current state (even if no images loaded)
+            updateImageSelectionUI();
+        });
+    }
+    
+    function loadLegacyBoxes() {
+        // Fallback to old storage format for backward compatibility
         const url = getUrl();
         chrome.storage.local.get([url], (result) => {
             if (chrome.runtime.lastError) return;
@@ -814,15 +1272,91 @@
                 }
 
                 setupBoxEvents(b);
-                // Apply visual settings to loaded box
                 applyVisualSettingsToBox(b);
                 root.appendChild(b);
             });
-            // Initial position update
             updateBoxPositions();
-            // Ensure all boxes have visual settings applied
             applyVisualSettings();
         });
+    }
+
+    // --- URL Normalization & Work ID Extraction ---
+    
+    function extractWorkId(url) {
+        try {
+            const urlObj = new URL(url);
+            const hostname = urlObj.hostname.toLowerCase();
+            const pathname = urlObj.pathname;
+            
+            // e-hentai: e-hentai.org/s/{hash}/{workId}-{page}
+            if (hostname.includes('e-hentai.org') || hostname.includes('exhentai.org')) {
+                const match = pathname.match(/\/s\/[^\/]+\/(\d+)-\d+/);
+                if (match) {
+                    return {
+                        workId: match[1],
+                        normalizedUrl: urlObj.origin + pathname.split('-')[0],
+                        site: 'e-hentai'
+                    };
+                }
+            }
+            
+            // X/Twitter: //x.com/{user}/status/{statusId}/photo/{photoNum}
+            if (hostname.includes('x.com') || hostname.includes('twitter.com')) {
+                const match = pathname.match(/\/status\/(\d+)/);
+                if (match) {
+                    return {
+                        workId: match[1],
+                        normalizedUrl: urlObj.origin + pathname.split('/photo/')[0],
+                        site: 'x'
+                    };
+                }
+            }
+            
+            // Pixiv: pixiv.net/en/artworks/{workId}#{imageNum}
+            if (hostname.includes('pixiv.net')) {
+                const match = pathname.match(/\/artworks\/(\d+)/);
+                if (match) {
+                    return {
+                        workId: match[1],
+                        normalizedUrl: urlObj.origin + pathname.split('#')[0],
+                        site: 'pixiv'
+                    };
+                }
+            }
+            
+            // Fallback: normalize URL by removing query params and fragments
+            return {
+                workId: null,
+                normalizedUrl: urlObj.origin + urlObj.pathname,
+                site: 'other'
+            };
+        } catch (e) {
+            // If URL parsing fails, return original URL
+            return {
+                workId: null,
+                normalizedUrl: url.split('?')[0].split('#')[0],
+                site: 'other'
+            };
+        }
+    }
+    
+    function getStorageKey(url) {
+        const workData = extractWorkId(url);
+        if (workData.workId) {
+            return `${workData.site}:${workData.workId}`;
+        }
+        return workData.normalizedUrl;
+    }
+    
+    function getCurrentPageUrl() {
+        // Get current URL without hash/query for page matching
+        const url = window.location.href;
+        try {
+            const urlObj = new URL(url);
+            return urlObj.origin + urlObj.pathname;
+        } catch (e) {
+            return url.split('?')[0].split('#')[0];
+        }
     }
 
     // --- Utils ---
@@ -832,7 +1366,25 @@
         const url = getUrl();
         if (url !== lastUrl) {
             lastUrl = url;
+            
+            // Clear all boxes and image overlays
             document.querySelectorAll('.deep-box').forEach(b => b.remove());
+            document.querySelectorAll('.deep-image-overlay').forEach(overlay => overlay.remove());
+            
+            // Deselect all images and clean up observers
+            selectedImages.forEach((containerData, img) => {
+                if (containerData.resizeObserver) {
+                    containerData.resizeObserver.disconnect();
+                }
+                img.classList.remove('deep-image-selected', 'deep-image-hover');
+            });
+            selectedImages.clear();
+            imageResizeObservers.clear();
+            
+            // Update UI to reflect cleared selection
+            updateImageSelectionUI();
+            
+            // Load boxes for new page
             loadBoxes();
         }
     }
@@ -856,6 +1408,397 @@
             setEditMode(false);
         }
     }
+
+    // --- Image Selection System ---
+
+    function setupImageSelection() {
+        // When edit mode is enabled, activate image selection mode
+        // We'll enable this when edit mode is turned on
+    }
+
+    function enableImageSelectionMode() {
+        imageSelectionMode = true;
+        root.classList.add('image-selection-mode');
+        
+        // Add hover listeners to all images
+        document.querySelectorAll('img').forEach(img => {
+            if (isImageVisible(img)) {
+                setupImageHover(img);
+            }
+        });
+
+        // Watch for new images added to the page
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (node.nodeType === 1) { // Element node
+                        if (node.tagName === 'IMG' && isImageVisible(node)) {
+                            setupImageHover(node);
+                        }
+                        // Also check for images within added nodes
+                        node.querySelectorAll && node.querySelectorAll('img').forEach(img => {
+                            if (isImageVisible(img)) {
+                                setupImageHover(img);
+                            }
+                        });
+                    }
+                });
+            });
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    function disableImageSelectionMode() {
+        imageSelectionMode = false;
+        root.classList.remove('image-selection-mode');
+        
+        // Remove hover effects from all images
+        document.querySelectorAll('img').forEach(img => {
+            img.classList.remove('deep-image-hover');
+        });
+        
+        // Deselect all images and clean up observers
+        selectedImages.forEach((containerData, img) => {
+            if (containerData.resizeObserver) {
+                containerData.resizeObserver.disconnect();
+            }
+            img.classList.remove('deep-image-selected');
+        });
+        selectedImages.clear();
+        imageResizeObservers.clear();
+        
+        hoveredImage = null;
+    }
+
+    function isImageVisible(img) {
+        if (!img) return false;
+        const rect = img.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && 
+               rect.top < window.innerHeight && 
+               rect.bottom > 0 &&
+               rect.left < window.innerWidth && 
+               rect.right > 0;
+    }
+
+    function setupImageHover(img) {
+        // Remove existing listeners to avoid duplicates
+        img.removeEventListener('mouseenter', handleImageHover);
+        img.removeEventListener('mouseleave', handleImageUnhover);
+        img.removeEventListener('click', handleImageClick);
+
+        img.addEventListener('mouseenter', handleImageHover, { passive: true });
+        img.addEventListener('mouseleave', handleImageUnhover, { passive: true });
+        img.addEventListener('click', handleImageClick);
+    }
+
+    function handleImageHover(e) {
+        if (!imageSelectionMode || !isEditMode) return;
+        const img = e.target;
+        if (img.tagName !== 'IMG') return;
+        
+        hoveredImage = img;
+        img.classList.add('deep-image-hover');
+    }
+
+    function handleImageUnhover(e) {
+        if (!imageSelectionMode) return;
+        const img = e.target;
+        if (img.tagName !== 'IMG') return;
+        
+        // Only remove hover if not selected
+        if (!selectedImages.has(img)) {
+            img.classList.remove('deep-image-hover');
+        }
+        if (hoveredImage === img) {
+            hoveredImage = null;
+        }
+    }
+
+    function handleImageClick(e) {
+        if (!imageSelectionMode || !isEditMode) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        const img = e.target;
+        if (img.tagName !== 'IMG') return;
+
+        // Toggle selection
+        if (selectedImages.has(img)) {
+            deselectImage(img);
+        } else {
+            selectImage(img);
+        }
+    }
+
+    function selectImage(img) {
+        if (selectedImages.has(img)) return; // Already selected
+
+        // Remove hover class, add selected class
+        img.classList.remove('deep-image-hover');
+        img.classList.add('deep-image-selected');
+
+        // Create overlay container for this image
+        const containerData = createImageOverlayContainer(img);
+        
+        // Store initial position
+        const rect = img.getBoundingClientRect();
+        containerData.lastPosition = {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height
+        };
+        
+        selectedImages.set(img, containerData);
+        
+        // Update UI to show active image count
+        updateImageSelectionUI();
+        
+        // Update root class to indicate images are selected
+        if (selectedImages.size > 0) {
+            root.classList.add('has-selected-images');
+        }
+        
+        // Start position monitoring if not already running
+        startPositionMonitoring();
+    }
+
+    function deselectImage(img) {
+        if (!selectedImages.has(img)) return;
+
+        img.classList.remove('deep-image-selected');
+        const containerData = selectedImages.get(img);
+        
+        // Disconnect ResizeObserver
+        if (containerData.resizeObserver) {
+            containerData.resizeObserver.disconnect();
+            imageResizeObservers.delete(img);
+        }
+        
+        // Remove overlay container
+        if (containerData.overlayContainer && containerData.overlayContainer.parentNode) {
+            containerData.overlayContainer.remove();
+        }
+        
+        selectedImages.delete(img);
+        updateImageSelectionUI();
+        
+        // Update root class to indicate if images are still selected
+        if (selectedImages.size === 0) {
+            root.classList.remove('has-selected-images');
+            // Stop position monitoring when no images selected
+            stopPositionMonitoring();
+        }
+    }
+
+    function createImageOverlayContainer(img) {
+        const container = document.createElement('div');
+        container.className = 'deep-image-overlay';
+        container.dataset.imageSelector = getUniqueSelector(img);
+        container.dataset.imageSrc = img.src || '';
+        
+        // Position container to match image bounds
+        updateImageOverlayPosition(container, img);
+        
+        root.appendChild(container);
+        
+        // Set up ResizeObserver to watch the image
+        const resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const img = entry.target;
+                if (selectedImages.has(img)) {
+                    const { overlayContainer } = selectedImages.get(img);
+                    updateImageOverlayPosition(overlayContainer, img);
+                    // Update all boxes within this overlay to maintain percentage positions
+                    updateBoxesInOverlay(overlayContainer, img);
+                }
+            }
+        });
+        
+        resizeObserver.observe(img);
+        imageResizeObservers.set(img, resizeObserver);
+        
+        return { overlayContainer: container, resizeObserver };
+    }
+
+    function updateImageOverlayPosition(container, img) {
+        const rect = img.getBoundingClientRect();
+        container.style.left = (rect.left + window.scrollX) + 'px';
+        container.style.top = (rect.top + window.scrollY) + 'px';
+        container.style.width = rect.width + 'px';
+        container.style.height = rect.height + 'px';
+    }
+
+    function updateBoxesInOverlay(overlayContainer, img) {
+        // Update all boxes within this overlay using percentage-based positioning
+        const boxes = overlayContainer.querySelectorAll('.deep-box');
+        const imgRect = img.getBoundingClientRect();
+        
+        boxes.forEach(box => {
+            const percentLeft = parseFloat(box.dataset.percentLeft);
+            const percentTop = parseFloat(box.dataset.percentTop);
+            const percentWidth = parseFloat(box.dataset.percentWidth);
+            const percentHeight = parseFloat(box.dataset.percentHeight);
+            
+            if (!isNaN(percentLeft) && !isNaN(percentTop)) {
+                box.style.left = (imgRect.width * percentLeft) + 'px';
+                box.style.top = (imgRect.height * percentTop) + 'px';
+            }
+            
+            if (!isNaN(percentWidth) && !isNaN(percentHeight)) {
+                box.style.width = (imgRect.width * percentWidth) + 'px';
+                box.style.height = (imgRect.height * percentHeight) + 'px';
+            }
+        });
+    }
+
+    function updateImageSelectionUI() {
+        // Update any UI indicators showing selected image count
+        if (selectedImages.size > 0) {
+            root.classList.add('has-selected-images');
+            root.setAttribute('data-selected-count', selectedImages.size);
+        } else {
+            root.classList.remove('has-selected-images');
+            root.removeAttribute('data-selected-count');
+        }
+    }
+
+    function findImageForOverlay(overlayContainer) {
+        // Find the image element that corresponds to this overlay
+        const selector = overlayContainer.dataset.imageSelector;
+        if (!selector) return null;
+        
+        try {
+            const img = document.querySelector(selector);
+            return img && img.tagName === 'IMG' ? img : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function updateImageOverlayPositions() {
+        // Update all image overlay container positions
+        selectedImages.forEach((containerData, img) => {
+            if (containerData.overlayContainer && isImageVisible(img)) {
+                updateImageOverlayPosition(containerData.overlayContainer, img);
+                updateBoxesInOverlay(containerData.overlayContainer, img);
+            }
+        });
+    }
+    
+    // Check if image positions have changed and update if needed
+    function checkImagePositions() {
+        if (selectedImages.size === 0 || !root.classList.contains('active')) {
+            return; // No images selected or overlay not active
+        }
+        
+        let positionChanged = false;
+        
+        selectedImages.forEach((containerData, img) => {
+            if (!containerData.overlayContainer || !isImageVisible(img)) return;
+            
+            const rect = img.getBoundingClientRect();
+            const currentPos = {
+                left: rect.left,
+                top: rect.top,
+                width: rect.width,
+                height: rect.height
+            };
+            
+            // Check if position changed (allow 1px tolerance for floating point)
+            if (containerData.lastPosition) {
+                const leftDiff = Math.abs(currentPos.left - containerData.lastPosition.left);
+                const topDiff = Math.abs(currentPos.top - containerData.lastPosition.top);
+                
+                if (leftDiff > 1 || topDiff > 1) {
+                    // Position changed significantly, update overlay
+                    updateImageOverlayPosition(containerData.overlayContainer, img);
+                    updateBoxesInOverlay(containerData.overlayContainer, img);
+                    positionChanged = true;
+                }
+            }
+            
+            // Store current position for next check
+            containerData.lastPosition = currentPos;
+        });
+        
+        return positionChanged;
+    }
+    
+    // Start position monitoring (polling fallback)
+    function startPositionMonitoring() {
+        if (positionCheckInterval) return; // Already running
+        
+        let lastCheckTime = 0;
+        const checkThrottleMs = 150; // Check every 150ms max
+        
+        const checkLoop = (timestamp) => {
+            // Throttle checks
+            if (timestamp - lastCheckTime >= checkThrottleMs) {
+                checkImagePositions();
+                lastCheckTime = timestamp;
+            }
+            
+            // Continue loop if we have selected images and overlay is active
+            if (selectedImages.size > 0 && root.classList.contains('active')) {
+                positionCheckInterval = requestAnimationFrame(checkLoop);
+            } else {
+                positionCheckInterval = null;
+            }
+        };
+        
+        positionCheckInterval = requestAnimationFrame(checkLoop);
+    }
+    
+    // Stop position monitoring
+    function stopPositionMonitoring() {
+        if (positionCheckInterval) {
+            cancelAnimationFrame(positionCheckInterval);
+            positionCheckInterval = null;
+        }
+    }
+    
+    // Setup MutationObserver to detect layout changes
+    function setupLayoutChangeDetection() {
+        let layoutCheckTimeout = null;
+        
+        const observer = new MutationObserver((mutations) => {
+            // Throttle: only check after mutations stop for 100ms
+            if (layoutCheckTimeout) clearTimeout(layoutCheckTimeout);
+            
+            layoutCheckTimeout = setTimeout(() => {
+                // Check if we have selected images
+                if (selectedImages.size > 0 && root.classList.contains('active')) {
+                    // Check positions and update if needed
+                    checkImagePositions();
+                }
+            }, 100);
+        });
+        
+        // Observe body for attribute/style changes that might affect layout
+        observer.observe(document.body, {
+            attributes: true,
+            attributeFilter: ['style', 'class'],
+            subtree: true,
+            childList: false
+        });
+    }
+
+    // Update setEditMode to enable/disable image selection
+    const originalSetEditMode = setEditMode;
+    setEditMode = function(enabled) {
+        originalSetEditMode(enabled);
+        if (enabled) {
+            enableImageSelectionMode();
+        } else {
+            disableImageSelectionMode();
+        }
+    };
 
     init();
 

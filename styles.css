@@ -14,6 +14,16 @@
   font-family: 'Roboto Mono', 'JetBrains Mono', monospace;
 }
 
+/* Image Selection Mode: Show pointer cursor when selecting images */
+.image-selection-mode:not(.has-selected-images) {
+  cursor: pointer !important;
+}
+
+/* After image is selected, show crosshair for drawing */
+.image-selection-mode.has-selected-images {
+  cursor: crosshair;
+}
+
 #deep-overlay-root.active {
   pointer-events: auto;
   /* CLEAN BACKGROUND - No dots */
@@ -36,6 +46,17 @@
   pointer-events: auto !important;
   background-color: rgba(255, 255, 255, 0.05) !important;
   /* Slight tint to indicate edit mode */
+}
+
+/* Image Selection Mode: Allow clicks on images to pass through */
+.mode-edit.image-selection-mode:not(.has-selected-images) {
+  pointer-events: none !important;
+}
+
+.mode-edit.image-selection-mode:not(.has-selected-images) .deep-box,
+.mode-edit.image-selection-mode:not(.has-selected-images) .deep-resize-handle,
+.mode-edit.image-selection-mode:not(.has-selected-images) .deep-note-bubble {
+  pointer-events: auto !important;
 }
 
 .mode-edit .deep-box {
@@ -198,4 +219,61 @@
 
 #deep-toolbar button:hover {
   color: #000;
+}
+
+/* Image Selection Mode */
+.image-selection-mode img {
+  transition: outline 0.2s, box-shadow 0.2s;
+  cursor: pointer !important;
+}
+
+.image-selection-mode img.deep-image-hover {
+  outline: 3px solid #2196f3 !important;
+  outline-offset: 2px;
+  cursor: pointer !important;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.3);
+}
+
+.image-selection-mode img.deep-image-selected {
+  outline: 3px solid #4caf50 !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3);
+}
+
+/* Image Overlay Container */
+.deep-image-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2147483646;
+  /* Just below root */
+}
+
+.mode-edit .deep-image-overlay {
+  pointer-events: auto;
+}
+
+.deep-image-overlay .deep-box {
+  position: absolute;
+  /* Boxes inside image overlay are relative to the container */
+}
+
+/* Image selection indicator */
+#deep-overlay-root.has-selected-images::before {
+  content: attr(data-selected-count) " image" attr(data-selected-count) "s selected";
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(33, 150, 243, 0.9);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  z-index: 2147483647;
+  pointer-events: none;
+  font-family: 'Roboto Mono', 'JetBrains Mono', monospace;
+}
+
+#deep-overlay-root.has-selected-images[data-selected-count="1"]::before {
+  content: "1 image selected";
 }
