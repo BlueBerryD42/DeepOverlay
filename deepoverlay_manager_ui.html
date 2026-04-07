@@ -1,0 +1,655 @@
+
+<style>
+:root {
+  --do-bg: #0e0f11;
+  --do-surface: #161719;
+  --do-raised: #1d1f22;
+  --do-border: rgba(255,255,255,0.08);
+  --do-border-md: rgba(255,255,255,0.14);
+  --do-text: #e8e9eb;
+  --do-muted: #7a7d85;
+  --do-hint: #4a4d54;
+  --do-accent: #4d9bff;
+  --do-accent-dim: rgba(77,155,255,0.12);
+  --do-danger: #e05a5a;
+  --do-success: #4caf7d;
+  --do-amber: #d4913a;
+  --do-badge-px: #7b5ea7;
+  --do-badge-x: #1d8cd1;
+  --do-badge-arc: #c0392b;
+  --do-radius: 6px;
+  --do-mono: var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace);
+}
+.do-light {
+  --do-bg: #f0f1f3;
+  --do-surface: #ffffff;
+  --do-raised: #f7f8fa;
+  --do-border: rgba(0,0,0,0.08);
+  --do-border-md: rgba(0,0,0,0.14);
+  --do-text: #1a1c1f;
+  --do-muted: #666a73;
+  --do-hint: #adb0b8;
+  --do-accent: #1a6fd4;
+  --do-accent-dim: rgba(26,111,212,0.1);
+  --do-danger: #c0392b;
+  --do-success: #2e7d52;
+  --do-amber: #b8751f;
+}
+.do-wrap {
+  font-family: var(--do-mono);
+  font-size: 13px;
+  background: var(--do-bg);
+  color: var(--do-text);
+  min-height: 640px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--do-border-md);
+}
+.do-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 48px;
+  border-bottom: 1px solid var(--do-border);
+  background: var(--do-surface);
+  flex-shrink: 0;
+}
+.do-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.do-logo-icon {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.do-logo-text {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--do-text);
+}
+.do-logo-sub {
+  font-size: 10px;
+  color: var(--do-muted);
+  letter-spacing: 0.06em;
+}
+.do-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.do-storage-badge {
+  font-size: 11px;
+  color: var(--do-muted);
+  padding: 3px 8px;
+  border: 1px solid var(--do-border);
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+.do-btn {
+  font-family: var(--do-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 5px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--do-border-md);
+  background: transparent;
+  color: var(--do-text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.do-btn:hover { background: var(--do-raised); border-color: var(--do-border-md); }
+.do-btn-accent { border-color: var(--do-accent); color: var(--do-accent); }
+.do-btn-accent:hover { background: var(--do-accent-dim); }
+.do-btn-danger { border-color: var(--do-danger); color: var(--do-danger); }
+.do-btn-danger:hover { background: rgba(224,90,90,0.1); }
+.do-btn-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+.do-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.do-sidebar {
+  width: 160px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--do-border);
+  background: var(--do-surface);
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0;
+}
+.do-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  color: var(--do-muted);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  transition: color 0.15s, background 0.15s;
+  user-select: none;
+}
+.do-nav-item:hover { color: var(--do-text); background: var(--do-raised); }
+.do-nav-item.active {
+  color: var(--do-accent);
+  border-left-color: var(--do-accent);
+  background: var(--do-accent-dim);
+}
+.do-nav-icon { font-size: 14px; width: 16px; text-align: center; }
+.do-nav-count {
+  margin-left: auto;
+  font-size: 10px;
+  background: var(--do-raised);
+  border: 1px solid var(--do-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--do-hint);
+}
+.do-panel {
+  flex: 1;
+  overflow-y: auto;
+  display: none;
+  flex-direction: column;
+  background: var(--do-bg);
+}
+.do-panel.active { display: flex; }
+.do-panel-head {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--do-border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  background: var(--do-surface);
+}
+.do-panel-title {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--do-muted);
+  text-transform: uppercase;
+}
+.do-panel-body { padding: 16px 20px; flex: 1; }
+.do-search {
+  font-family: var(--do-mono);
+  font-size: 13px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--do-surface);
+  border: 1px solid var(--do-border-md);
+  border-radius: var(--do-radius);
+  color: var(--do-text);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.do-search:focus { border-color: var(--do-accent); }
+.do-search::placeholder { color: var(--do-hint); }
+.do-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  margin-top: 10px;
+  border-bottom: 1px solid var(--do-border);
+  margin-bottom: 8px;
+}
+.do-bulk-count { font-size: 11px; color: var(--do-muted); }
+.do-cards { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.do-card {
+  background: var(--do-surface);
+  border: 1px solid var(--do-border);
+  border-radius: var(--do-radius);
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.do-card:hover { border-color: var(--do-border-md); }
+.do-card-row { display: flex; align-items: center; gap: 8px; }
+.do-badge {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.badge-px { background: rgba(123,94,167,0.2); color: #a98fd4; }
+.badge-x { background: rgba(29,140,209,0.2); color: #5bb8f5; }
+.badge-arc { background: rgba(192,57,43,0.2); color: #e07c70; }
+.badge-gen { background: rgba(120,120,120,0.15); color: var(--do-muted); }
+.do-card-id { font-size: 11px; color: var(--do-muted); flex: 1; }
+.do-card-date { font-size: 10px; color: var(--do-hint); }
+.do-card-stats { display: flex; gap: 12px; margin-top: 6px; }
+.do-stat { font-size: 11px; color: var(--do-muted); }
+.do-stat span { color: var(--do-text); font-weight: 600; }
+.do-card-expanded {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--do-border);
+  display: none;
+}
+.do-card.open .do-card-expanded { display: block; }
+.do-thumb-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.do-thumb {
+  width: 56px;
+  height: 40px;
+  border-radius: 4px;
+  background: var(--do-raised);
+  border: 1px solid var(--do-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: var(--do-hint);
+}
+.do-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 60px 0;
+  color: var(--do-hint);
+}
+.do-empty-icon { font-size: 28px; opacity: 0.4; }
+.do-empty-text { font-size: 12px; letter-spacing: 0.06em; }
+.do-section { margin-bottom: 24px; }
+.do-section-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--do-hint);
+  margin-bottom: 12px;
+}
+.do-field-row {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.do-field-label { font-size: 12px; color: var(--do-muted); }
+.do-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  background: var(--do-border-md);
+  border-radius: 2px;
+  outline: none;
+  border: none;
+}
+.do-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--do-accent);
+  cursor: pointer;
+  border: 2px solid var(--do-surface);
+}
+.do-slider-val { font-size: 11px; color: var(--do-text); min-width: 30px; text-align: right; }
+.do-color-row {
+  display: grid;
+  grid-template-columns: 120px 32px 1fr;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.do-color-input {
+  width: 32px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid var(--do-border-md);
+  cursor: pointer;
+  padding: 0;
+  background: none;
+}
+.do-color-hex { font-size: 11px; color: var(--do-muted); font-family: var(--do-mono); }
+.do-textarea {
+  font-family: var(--do-mono);
+  font-size: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--do-surface);
+  border: 1px solid var(--do-border-md);
+  border-radius: var(--do-radius);
+  color: var(--do-text);
+  outline: none;
+  resize: vertical;
+  min-height: 90px;
+  box-sizing: border-box;
+  line-height: 1.7;
+}
+.do-textarea:focus { border-color: var(--do-accent); }
+.do-help { font-size: 11px; color: var(--do-hint); margin-top: 5px; }
+.do-usage-block {
+  background: var(--do-surface);
+  border: 1px solid var(--do-border);
+  border-radius: var(--do-radius);
+  padding: 16px;
+  margin-bottom: 20px;
+}
+.do-usage-nums {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.do-usage-big { font-size: 28px; font-weight: 700; color: var(--do-text); }
+.do-usage-denom { font-size: 13px; color: var(--do-muted); }
+.do-usage-label { font-size: 10px; color: var(--do-hint); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+.do-progress {
+  height: 4px;
+  background: var(--do-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.do-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--do-accent);
+  width: 34%;
+  transition: width 0.4s;
+}
+.do-link-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+.do-link-card {
+  background: var(--do-surface);
+  border: 1px solid var(--do-border);
+  border-radius: var(--do-radius);
+  padding: 12px 14px;
+  cursor: pointer;
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.do-link-card:hover { border-color: var(--do-accent); background: var(--do-accent-dim); }
+.do-link-name { font-size: 12px; color: var(--do-text); letter-spacing: 0.04em; }
+.do-link-desc { font-size: 10px; color: var(--do-hint); }
+.do-link-ext { font-size: 9px; color: var(--do-accent); margin-top: 4px; letter-spacing: 0.06em; }
+.do-divider { height: 1px; background: var(--do-border); margin: 20px 0; }
+</style>
+
+<div class="do-wrap" id="doApp">
+  <div class="do-header">
+    <div class="do-logo">
+      <div class="do-logo-icon">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+          <rect x="1" y="1" width="20" height="20" rx="4" stroke="#4d9bff" stroke-width="1.5" fill="none"/>
+          <rect x="5" y="5" width="5" height="5" rx="1" fill="#4d9bff" opacity="0.7"/>
+          <rect x="12" y="5" width="5" height="5" rx="1" fill="#4d9bff" opacity="0.4"/>
+          <rect x="5" y="12" width="5" height="5" rx="1" fill="#4d9bff" opacity="0.4"/>
+          <rect x="12" y="12" width="5" height="5" rx="1" fill="#4d9bff" opacity="0.2"/>
+        </svg>
+      </div>
+      <div>
+        <div class="do-logo-text">DeepOverlay</div>
+        <div class="do-logo-sub">MANAGER v2.1</div>
+      </div>
+    </div>
+    <div class="do-header-right">
+      <div class="do-storage-badge" id="storageText">47.2 KB / 5 MB</div>
+      <button class="do-btn do-btn-accent" onclick="alert('Refresh triggered')">↺ Refresh</button>
+      <button class="do-btn" onclick="alert('Export triggered')">↓ Export</button>
+      <button class="do-btn do-btn-danger" onclick="alert('Clear all? (confirm)')">✕ Clear</button>
+      <button class="do-btn do-btn-icon" id="themeBtn" onclick="toggleTheme()" title="Toggle theme">◐</button>
+    </div>
+  </div>
+
+  <div class="do-body">
+    <div class="do-sidebar">
+      <div class="do-nav-item active" data-panel="library">
+        <span class="do-nav-icon">⊞</span> Library
+        <span class="do-nav-count">12</span>
+      </div>
+      <div class="do-nav-item" data-panel="settings">
+        <span class="do-nav-icon">⚙</span> Settings
+      </div>
+      <div class="do-nav-item" data-panel="cloud">
+        <span class="do-nav-icon">⬡</span> Cloud / OCR
+      </div>
+    </div>
+
+    <div class="do-panel active" id="panel-library">
+      <div class="do-panel-head">
+        <span class="do-panel-title">Library</span>
+        <span style="font-size:10px;color:var(--do-hint)">— saved overlays</span>
+      </div>
+      <div class="do-panel-body">
+        <input class="do-search" type="text" id="libSearch" placeholder="/ search works, ids, hostnames…" oninput="filterCards()">
+        <div class="do-bulk-bar">
+          <span class="do-bulk-count" id="cardCount">12 works</span>
+          <span style="flex:1"></span>
+          <button class="do-btn" style="font-size:10px;padding:3px 8px">select all</button>
+          <button class="do-btn do-btn-danger" style="font-size:10px;padding:3px 8px">delete selected</button>
+        </div>
+        <div class="do-cards" id="cardList"></div>
+        <div class="do-empty" id="emptyState" style="display:none">
+          <div class="do-empty-icon">⊘</div>
+          <div class="do-empty-text">no works match your query</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="do-panel" id="panel-settings">
+      <div class="do-panel-head">
+        <span class="do-panel-title">Settings</span>
+        <span style="font-size:10px;color:var(--do-hint)">— overlay appearance & blocked sites</span>
+      </div>
+      <div class="do-panel-body">
+        <div class="do-section">
+          <div class="do-section-label">Appearance</div>
+          <div class="do-field-row">
+            <div class="do-field-label">Overlay opacity</div>
+            <input type="range" class="do-slider" min="0" max="100" value="75" step="1" id="opacitySlider" oninput="document.getElementById('opacityVal').textContent=this.value+'%'">
+            <div class="do-slider-val" id="opacityVal">75%</div>
+          </div>
+          <div class="do-field-row">
+            <div class="do-field-label">Box thickness</div>
+            <input type="range" class="do-slider" min="1" max="8" value="2" step="1" id="thickSlider" oninput="document.getElementById('thickVal').textContent=this.value+'px'">
+            <div class="do-slider-val" id="thickVal">2px</div>
+          </div>
+          <div class="do-field-row">
+            <div class="do-field-label">Font scale</div>
+            <input type="range" class="do-slider" min="8" max="20" value="13" step="1" id="fontSlider" oninput="document.getElementById('fontVal').textContent=this.value+'px'">
+            <div class="do-slider-val" id="fontVal">13px</div>
+          </div>
+          <div class="do-divider" style="margin:14px 0"></div>
+          <div class="do-color-row">
+            <div class="do-field-label">Border color</div>
+            <input type="color" class="do-color-input" value="#4d9bff" id="borderColor" oninput="document.getElementById('borderHex').textContent=this.value">
+            <div class="do-color-hex" id="borderHex">#4d9bff</div>
+          </div>
+          <div class="do-color-row">
+            <div class="do-field-label">Fill color</div>
+            <input type="color" class="do-color-input" value="#1a2a3a" id="fillColor" oninput="document.getElementById('fillHex').textContent=this.value">
+            <div class="do-color-hex" id="fillHex">#1a2a3a</div>
+          </div>
+          <div class="do-color-row">
+            <div class="do-field-label">Label text</div>
+            <input type="color" class="do-color-input" value="#e8e9eb" id="labelColor" oninput="document.getElementById('labelHex').textContent=this.value">
+            <div class="do-color-hex" id="labelHex">#e8e9eb</div>
+          </div>
+        </div>
+        <div class="do-section">
+          <div class="do-section-label">Blocked hostnames</div>
+          <textarea class="do-textarea" placeholder="google.com&#10;reddit.com&#10;example.net">google.com
+internal.company.net
+mail.proton.me</textarea>
+          <div class="do-help">One hostname per line. Extension will not inject on these domains.</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="do-btn do-btn-accent">Save settings</button>
+          <button class="do-btn">Reset defaults</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="do-panel" id="panel-cloud">
+      <div class="do-panel-head">
+        <span class="do-panel-title">Cloud / OCR</span>
+        <span style="font-size:10px;color:var(--do-hint)">— usage & console links</span>
+      </div>
+      <div class="do-panel-body">
+        <div class="do-usage-block">
+          <div class="do-usage-label">Monthly OCR usage</div>
+          <div class="do-usage-nums">
+            <div class="do-usage-big">341</div>
+            <div class="do-usage-denom">/ 1,000 requests</div>
+          </div>
+          <div class="do-progress"><div class="do-progress-fill" style="width:34.1%"></div></div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px">
+            <div style="font-size:10px;color:var(--do-hint)">34.1% used · resets Jul 1</div>
+            <div style="font-size:10px;color:var(--do-success)">659 remaining</div>
+          </div>
+        </div>
+        <div class="do-section-label" style="margin-bottom:10px">Google Cloud console</div>
+        <div class="do-link-grid">
+          <a class="do-link-card" href="#">
+            <div class="do-link-name">Cloud Run</div>
+            <div class="do-link-desc">Manage OCR service</div>
+            <div class="do-link-ext">console.cloud.google.com ↗</div>
+          </a>
+          <a class="do-link-card" href="#">
+            <div class="do-link-name">Billing</div>
+            <div class="do-link-desc">Usage & invoices</div>
+            <div class="do-link-ext">console.cloud.google.com ↗</div>
+          </a>
+          <a class="do-link-card" href="#">
+            <div class="do-link-name">Quotas</div>
+            <div class="do-link-desc">API rate limits</div>
+            <div class="do-link-ext">console.cloud.google.com ↗</div>
+          </a>
+          <a class="do-link-card" href="#">
+            <div class="do-link-name">Artifacts</div>
+            <div class="do-link-desc">Container registry</div>
+            <div class="do-link-ext">console.cloud.google.com ↗</div>
+          </a>
+          <a class="do-link-card" href="#">
+            <div class="do-link-name">Vision API</div>
+            <div class="do-link-desc">OCR endpoint config</div>
+            <div class="do-link-ext">console.cloud.google.com ↗</div>
+          </a>
+          <a class="do-link-card" href="#">
+            <div class="do-link-name">IAM</div>
+            <div class="do-link-desc">Permissions & roles</div>
+            <div class="do-link-ext">console.cloud.google.com ↗</div>
+          </a>
+        </div>
+        <div class="do-divider"></div>
+        <div class="do-section-label" style="margin-bottom:10px">Service endpoint</div>
+        <div style="background:var(--do-surface);border:1px solid var(--do-border);border-radius:var(--do-radius);padding:10px 14px">
+          <div style="font-size:10px;color:var(--do-hint);margin-bottom:4px">CLOUD_RUN_URL</div>
+          <div style="font-size:12px;color:var(--do-accent);word-break:break-all">https://ocr-service-xkj72-uc.a.run.app</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const cards = [
+  { site: 'pixiv', badge: 'badge-px', label: 'Pixiv', id: 'work_artid_112847390', boxes: 8, imgs: 3, date: '2025-06-28', tags: ['jp','translation'] },
+  { site: 'x', badge: 'badge-x', label: 'X / Twitter', id: 'post_1804293847560', boxes: 3, imgs: 1, date: '2025-06-27', tags: ['en'] },
+  { site: 'pixiv', badge: 'badge-px', label: 'Pixiv', id: 'work_artid_109923441', boxes: 14, imgs: 6, date: '2025-06-25', tags: ['jp','translation'] },
+  { site: 'arc', badge: 'badge-arc', label: 'Archive', id: 'archive_ch3_pg044', boxes: 22, imgs: 4, date: '2025-06-22', tags: ['scan'] },
+  { site: 'x', badge: 'badge-x', label: 'X / Twitter', id: 'post_1802884910223', boxes: 5, imgs: 2, date: '2025-06-20', tags: ['en'] },
+  { site: 'pixiv', badge: 'badge-px', label: 'Pixiv', id: 'work_artid_108741223', boxes: 9, imgs: 3, date: '2025-06-18', tags: ['jp'] },
+  { site: 'arc', badge: 'badge-arc', label: 'Archive', id: 'archive_ch7_pg012', boxes: 18, imgs: 5, date: '2025-06-16', tags: ['scan','translation'] },
+  { site: 'gen', badge: 'badge-gen', label: 'generic', id: 'blob_0f4a8c2b1e', boxes: 2, imgs: 1, date: '2025-06-14', tags: ['misc'] },
+  { site: 'pixiv', badge: 'badge-px', label: 'Pixiv', id: 'work_artid_107334489', boxes: 11, imgs: 4, date: '2025-06-11', tags: ['jp','translation'] },
+  { site: 'x', badge: 'badge-x', label: 'X / Twitter', id: 'post_1799023847812', boxes: 4, imgs: 1, date: '2025-06-09', tags: ['en'] },
+  { site: 'arc', badge: 'badge-arc', label: 'Archive', id: 'archive_vol2_pg099', boxes: 31, imgs: 7, date: '2025-06-07', tags: ['scan'] },
+  { site: 'gen', badge: 'badge-gen', label: 'generic', id: 'blob_3c9d7f2a44', boxes: 6, imgs: 2, date: '2025-06-05', tags: ['misc'] },
+];
+
+function renderCards(data) {
+  const list = document.getElementById('cardList');
+  const empty = document.getElementById('emptyState');
+  const count = document.getElementById('cardCount');
+  if (!data.length) {
+    list.innerHTML = '';
+    empty.style.display = 'flex';
+    count.textContent = '0 works';
+    return;
+  }
+  empty.style.display = 'none';
+  count.textContent = data.length + ' works';
+  list.innerHTML = data.map((c,i) => `
+    <div class="do-card" onclick="toggleCard(this)">
+      <div class="do-card-row">
+        <span class="do-badge ${c.badge}">${c.label}</span>
+        <span class="do-card-id">${c.id}</span>
+        <span class="do-card-date">${c.date}</span>
+      </div>
+      <div class="do-card-stats">
+        <div class="do-stat"><span>${c.boxes}</span> boxes</div>
+        <div class="do-stat"><span>${c.imgs}</span> images</div>
+        <div class="do-stat">${c.tags.map(t=>`<span style="font-size:10px;color:var(--do-hint);border:1px solid var(--do-border);border-radius:3px;padding:1px 5px;">${t}</span>`).join(' ')}</div>
+      </div>
+      <div class="do-card-expanded">
+        <div class="do-thumb-row">
+          ${Array.from({length:c.imgs},(_,j)=>`<div class="do-thumb">img_${j+1}</div>`).join('')}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:6px">
+          <button class="do-btn do-btn-accent" style="font-size:10px;padding:3px 8px" onclick="event.stopPropagation()">view boxes</button>
+          <button class="do-btn" style="font-size:10px;padding:3px 8px" onclick="event.stopPropagation()">export</button>
+          <button class="do-btn do-btn-danger" style="font-size:10px;padding:3px 8px" onclick="event.stopPropagation()">delete</button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function toggleCard(el) { el.classList.toggle('open'); }
+
+function filterCards() {
+  const q = document.getElementById('libSearch').value.toLowerCase();
+  const filtered = q ? cards.filter(c =>
+    c.id.toLowerCase().includes(q) ||
+    c.label.toLowerCase().includes(q) ||
+    c.tags.some(t => t.includes(q)) ||
+    c.site.includes(q)
+  ) : cards;
+  renderCards(filtered);
+}
+
+document.querySelectorAll('.do-nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.do-nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.do-panel').forEach(p => p.classList.remove('active'));
+    item.classList.add('active');
+    document.getElementById('panel-' + item.dataset.panel).classList.add('active');
+  });
+});
+
+let dark = true;
+function toggleTheme() {
+  dark = !dark;
+  document.getElementById('doApp').classList.toggle('do-light', !dark);
+}
+
+renderCards(cards);
+</script>

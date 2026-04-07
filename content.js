@@ -156,6 +156,18 @@
             setTimeout(() => loadBoxes(), 200);
         });
 
+        // Some sites (e.g. e-hentai next/prev) swap/replace the main <img> after URL change.
+        // If we load before the new image finishes loading, our retry loop can miss it.
+        // Listen for image load events and re-run loadBoxes (debounced) to attach overlays reliably.
+        let imgLoadReloadT = null;
+        document.addEventListener('load', (e) => {
+            const t = e.target;
+            if (!t || t.tagName !== 'IMG') return;
+            if (!shell?.classList?.contains('active')) return;
+            if (imgLoadReloadT) clearTimeout(imgLoadReloadT);
+            imgLoadReloadT = setTimeout(() => loadBoxes(), 80);
+        }, true);
+
         // 6. Messages
         chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (msg.action === "TOGGLE") toggleVisibility();
@@ -1168,9 +1180,21 @@
                 }
             });
             
-            // Update work entry with image data
-            imageBoxes.forEach((imageData, selector) => {
-                workEntry.images[selector] = imageData;
+            // Update work entry with image data — key by page URL + CSS selector so
+            // multi-page galleries (e.g. e-h) do not overwrite the same selector on another page.
+            imageBoxes.forEach((imageData, cssSelector) => {
+                const storageImageKey = adapters().makeImageStorageKey(pageUrl, cssSelector);
+                workEntry.images[storageImageKey] = imageData;
+            });
+
+            // Drop legacy keys (selector-only) for this page when we saved composite keys above
+            Object.keys(workEntry.images).forEach((k) => {
+                const p = adapters().parseImageStorageKey(k);
+                if (!p.legacy) return;
+                const data = workEntry.images[k];
+                if (data.pageUrl !== pageUrl) return;
+                if (!imageBoxes.has(p.cssSelector)) return;
+                delete workEntry.images[k];
             });
             
             // Save to storage + _index
@@ -1210,23 +1234,26 @@
             const missingSelectors = [];
             
             // Filter images by pageUrl - only load boxes for current page
-            Object.keys(workEntry.images).forEach(selector => {
-                const imageData = workEntry.images[selector];
+            Object.keys(workEntry.images).forEach(imageKey => {
+                const imageData = workEntry.images[imageKey];
                 
                 // Only load if this image is on the current page
                 if (imageData.pageUrl !== pageUrl) return;
+
+                const parsed = adapters().parseImageStorageKey(imageKey);
+                const cssSelector = parsed.cssSelector;
                 
                 // Try to find the image in the DOM
                 let img;
                 try {
-                    img = document.querySelector(selector);
+                    img = document.querySelector(cssSelector);
                 } catch (e) {
-                    missingSelectors.push(selector);
+                    missingSelectors.push(cssSelector);
                     return; // Invalid selector
                 }
                 
                 if (!img || img.tagName !== 'IMG' || !isImageVisible(img)) {
-                    missingSelectors.push(selector);
+                    missingSelectors.push(cssSelector);
                     return; // Image not found or not visible
                 }
                 
@@ -1246,7 +1273,7 @@
                     const box = document.createElement('div');
                     box.className = 'deep-box';
                     box.dataset.note = boxData.note || "";
-                    box.dataset.imageSelector = selector;
+                    box.dataset.imageSelector = cssSelector;
                     box.dataset.imageSrc = boxData.imageSrc || imageData.src || "";
                     
                     // Store percentage values
@@ -1277,9 +1304,9 @@
             });
             
             // If some images weren't found and we haven't retried too many times, retry
-            if (missingSelectors.length > 0 && retryCount < 10) {
+            if (missingSelectors.length > 0 && retryCount < 30) {
                 // Retry after a delay, with exponential backoff
-                const delay = Math.min(100 * Math.pow(1.5, retryCount), 2000);
+                const delay = Math.min(120 * Math.pow(1.45, retryCount), 3000);
                 setTimeout(() => {
                     loadBoxes(retryCount + 1);
                 }, delay);

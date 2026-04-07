@@ -29,7 +29,10 @@ var DeepOverlayAdapters = (() => {
     getStorageKey: () => getStorageKey,
     isReservedKey: () => isReservedKey,
     isWorkKey: () => isWorkKey,
+    makeImageStorageKey: () => makeImageStorageKey,
+    migrateImageKeysInWorkEntry: () => migrateImageKeysInWorkEntry,
     migrateStorageSnapshot: () => migrateStorageSnapshot,
+    parseImageStorageKey: () => parseImageStorageKey,
     rebuildIndexFromWorks: () => rebuildIndexFromWorks,
     removeIndexKey: () => removeIndexKey,
     upsertIndexEntry: () => upsertIndexEntry
@@ -37,7 +40,7 @@ var DeepOverlayAdapters = (() => {
   var INDEX_KEY = "_index";
   var QUOTA_KEY = "quota:ocr";
   var SCHEMA_VERSION_KEY = "_schemaVersion";
-  var CURRENT_SCHEMA_VERSION = 2;
+  var CURRENT_SCHEMA_VERSION = 3;
   function djb2Hex(str) {
     let h = 5381;
     for (let i = 0; i < str.length; i++) h = (h << 5) + h + str.charCodeAt(i);
@@ -160,6 +163,45 @@ var DeepOverlayAdapters = (() => {
   function getStorageKey(url) {
     return getAdapter(url).storageKey(url);
   }
+  var IMAGE_ENTRY_SEP = "";
+  function makeImageStorageKey(pageUrl, cssSelector) {
+    return pageUrl + IMAGE_ENTRY_SEP + cssSelector;
+  }
+  function parseImageStorageKey(key) {
+    const i = key.indexOf(IMAGE_ENTRY_SEP);
+    if (i === -1) {
+      return { pageUrl: null, cssSelector: key, legacy: true };
+    }
+    return {
+      pageUrl: key.slice(0, i),
+      cssSelector: key.slice(i + IMAGE_ENTRY_SEP.length),
+      legacy: false
+    };
+  }
+  function migrateImageKeysInWorkEntry(workEntry) {
+    if (!workEntry?.images || typeof workEntry.images !== "object") return false;
+    const images = workEntry.images;
+    const keys = Object.keys(images);
+    let changed = false;
+    const next = { ...images };
+    for (const key of keys) {
+      if (key.indexOf(IMAGE_ENTRY_SEP) !== -1) continue;
+      const data = images[key];
+      if (!data || typeof data !== "object" || !data.pageUrl) continue;
+      const nk = makeImageStorageKey(data.pageUrl, key);
+      if (nk === key) continue;
+      if (next[nk] !== void 0) {
+        delete next[key];
+        changed = true;
+        continue;
+      }
+      next[nk] = data;
+      delete next[key];
+      changed = true;
+    }
+    if (changed) workEntry.images = next;
+    return changed;
+  }
   function isWorkKey(key) {
     return typeof key === "string" && key.startsWith("work:");
   }
@@ -247,6 +289,7 @@ var DeepOverlayAdapters = (() => {
         if (processedWorkKeys.has(newKey)) continue;
         const we = { ...val };
         normalizeWorkEntryFields(we, newKey);
+        migrateImageKeysInWorkEntry(we);
         upsertIndexEntry(index, newKey, we);
         processedWorkKeys.add(newKey);
         set[newKey] = we;

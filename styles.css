@@ -292,11 +292,13 @@
 
 /* Image selection indicator */
 #deep-overlay-root.has-selected-images::before {
-  content: attr(data-selected-count) " image" attr(data-selected-count) "s selected";
+  content: attr(data-selected-count) " images selected";
   position: fixed;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: 10px;
+  left: 10px;
+  top: auto;
+  right: auto;
+  transform: none;
   background: rgba(33, 150, 243, 0.9);
   color: white;
   padding: 6px 12px;

@@ -46,8 +46,10 @@ export function filterAndGroupData(allData, query = "") {
                 });
             });
             
-            // Enhanced search: workId, site, baseUrl, notes, pageUrls, image src
+            // Enhanced search: displayName, workId, site, baseUrl, notes, pageUrls, image src
+            const displayName = (workEntry.metadata?.displayName || '').trim();
             const matchesQuery = lowerQuery === "" ||
+                (displayName && displayName.toLowerCase().includes(lowerQuery)) ||
                 (workEntry.workId && workEntry.workId.toString().includes(lowerQuery)) ||
                 (workEntry.site && workEntry.site.toLowerCase().includes(lowerQuery)) ||
                 (workEntry.baseUrl && workEntry.baseUrl.toLowerCase().includes(lowerQuery)) ||
@@ -135,16 +137,17 @@ export function sortWorks(works, sortBy = 'date', order = 'desc') {
 }
 
 export function filterWorks(works, filters = {}) {
-    return works.filter(work => {
+    const site = filters.site;
+    return works.filter((work) => {
         if (work.legacy) {
-            // Legacy works: only filter by site if specified
-            if (filters.site && filters.site !== 'all') return false;
-            return true;
+            if (!site || site === 'all') return true;
+            return site === 'legacy';
         }
-        
-        // Filter by site
-        if (filters.site && filters.site !== 'all' && work.workEntry.site !== filters.site) {
-            return false;
+
+        if (site && site !== 'all') {
+            if (site === 'legacy') return false;
+            const wSite = work.workEntry.site || 'other';
+            if (wSite !== site) return false;
         }
         
         // Filter by date range

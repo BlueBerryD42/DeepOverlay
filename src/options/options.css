@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap');
+@import './manager-shell.css';
 
 :root {
   /* Default Dark Theme */
@@ -37,7 +38,8 @@
   --btn-hover: #eeeeee;
 }
 
-body {
+/* Base body styles: legacy fallbacks; manager UI uses body.do-manager-body in manager-shell.css */
+body:not(.do-manager-body) {
   background: var(--bg-color);
   color: var(--text-primary);
   font-family: 'Roboto Mono', 'JetBrains Mono', monospace;
@@ -126,12 +128,7 @@ input[type="text"]:focus {
   border-color: var(--text-secondary);
 }
 
-/* Dashboard List */
-#dashboard-list {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
+/* Dashboard list layout: see manager-shell.css #dashboard-list */
 
 /* Domain Group */
 .domain-group {
@@ -387,6 +384,10 @@ button.danger:hover {
 
 .site-badge-other {
   background: #999;
+}
+
+.site-badge-archive {
+  background: #8b2942;
 }
 
 /* Work Card */

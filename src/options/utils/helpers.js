@@ -6,21 +6,68 @@ export function formatDate(timestamp) {
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+export function formatDateShort(timestamp) {
+    if (!timestamp) return '—';
+    const date = new Date(timestamp);
+    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 export function truncateText(text, maxLength = 50) {
     if (!text) return '';
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength) + '...';
 }
 
+const SITE_BADGE_CLASS = {
+    'e-hentai': 'site-badge-ehentai',
+    'x': 'site-badge-x',
+    'pixiv': 'site-badge-pixiv',
+    'generic': 'site-badge-other',
+    'other': 'site-badge-other'
+};
+
+const SITE_BADGE_LABEL = {
+    'e-hentai': 'E-H',
+    'x': 'X',
+    'pixiv': 'Pixiv',
+    'generic': 'Web',
+    'other': 'Other'
+};
+
+export function getSiteBadgeClass(site) {
+    return SITE_BADGE_CLASS[site] || SITE_BADGE_CLASS.other;
+}
+
+/** DOM element for minimal cards (avoids innerHTML for badge). */
+export function createSiteBadgeElement(site) {
+    const span = document.createElement('span');
+    span.className = `site-badge ${getSiteBadgeClass(site)}`;
+    span.textContent = SITE_BADGE_LABEL[site] || SITE_BADGE_LABEL.other;
+    return span;
+}
+
 export function getSiteBadge(site) {
-    const badges = {
-        'e-hentai': '<span class="site-badge site-badge-ehentai">E-H</span>',
-        'x': '<span class="site-badge site-badge-x">X</span>',
-        'pixiv': '<span class="site-badge site-badge-pixiv">P</span>',
-        'generic': '<span class="site-badge site-badge-other">G</span>',
-        'other': '<span class="site-badge site-badge-other">•</span>'
-    };
-    return badges[site] || badges['other'];
+    const cls = getSiteBadgeClass(site);
+    const label = SITE_BADGE_LABEL[site] || SITE_BADGE_LABEL.other;
+    return `<span class="site-badge ${cls}">${label}</span>`;
+}
+
+/** User-defined label in options library, or numeric / string work id. */
+export function getWorkDisplayLabel(workEntry) {
+    if (!workEntry || workEntry.workId === undefined) return 'N/A';
+    const custom = (workEntry.metadata?.displayName || '').trim();
+    if (custom) return custom;
+    return String(workEntry.workId);
+}
+
+export function hostChipFromUrl(pageUrl) {
+    if (!pageUrl) return '';
+    try {
+        const h = new URL(pageUrl).hostname.replace(/^www\./, '');
+        return h.length > 28 ? `${h.slice(0, 26)}…` : h;
+    } catch {
+        return '';
+    }
 }
 
 export function formatPageUrl(pageUrl, site) {

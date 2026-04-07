@@ -1,13 +1,17 @@
 // Individual box note editor component
 
-export function createBoxEditor(storageKey, imageSelector, boxIndex, boxData, onUpdate) {
+/**
+ * @param {{ compact?: boolean }} [opts]
+ */
+export function createBoxEditor(storageKey, imageSelector, boxIndex, boxData, onUpdate, opts = {}) {
+    const compact = opts.compact === true;
     const container = document.createElement('div');
-    container.className = 'box-editor';
+    container.className = compact ? 'box-editor box-editor-compact' : 'box-editor';
     
     const editor = document.createElement('textarea');
     editor.className = 'note-editor';
     editor.value = boxData.note || "";
-    editor.placeholder = `Box ${boxIndex + 1} - Empty note...`;
+    editor.placeholder = compact ? 'Note…' : `Box ${boxIndex + 1} - Empty note...`;
     editor.dataset.storageKey = storageKey;
     editor.dataset.imageSelector = imageSelector;
     editor.dataset.boxIndex = boxIndex;
@@ -19,7 +23,7 @@ export function createBoxEditor(storageKey, imageSelector, boxIndex, boxData, on
     
     // Delete button
     const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'box-delete-btn';
+    deleteBtn.className = compact ? 'box-delete-btn box-delete-btn-compact' : 'box-delete-btn';
     deleteBtn.innerHTML = '×';
     deleteBtn.title = 'Delete this box';
     deleteBtn.onclick = (e) => {
@@ -28,13 +32,11 @@ export function createBoxEditor(storageKey, imageSelector, boxIndex, boxData, on
             onUpdate(storageKey, imageSelector, boxIndex, null); // null means delete
         }
     };
-    
-    // Wrap editor in container for positioning
+
     const editorWrapper = document.createElement('div');
-    editorWrapper.className = 'box-editor-wrapper';
+    editorWrapper.className = compact ? 'box-editor-wrapper box-editor-wrapper-compact' : 'box-editor-wrapper';
     editorWrapper.style.position = 'relative';
-    
-    // Auto-save with debounce
+
     let timeout;
     editor.addEventListener('input', (e) => {
         clearTimeout(timeout);
@@ -42,15 +44,24 @@ export function createBoxEditor(storageKey, imageSelector, boxIndex, boxData, on
             onUpdate(storageKey, imageSelector, boxIndex, e.target.value);
         }, 500);
     });
-    
-    // Stop propagation on click so typing doesn't close parent
+
     editor.onclick = (e) => e.stopPropagation();
-    
-    editorWrapper.appendChild(editor);
-    editorWrapper.appendChild(deleteBtn);
-    
-    container.appendChild(info);
-    container.appendChild(editorWrapper);
-    
+
+    if (compact) {
+        info.className = 'box-info box-info-compact';
+        const row = document.createElement('div');
+        row.className = 'box-editor-compact-toolbar';
+        row.appendChild(info);
+        row.appendChild(deleteBtn);
+        editorWrapper.appendChild(editor);
+        container.appendChild(row);
+        container.appendChild(editorWrapper);
+    } else {
+        editorWrapper.appendChild(editor);
+        editorWrapper.appendChild(deleteBtn);
+        container.appendChild(info);
+        container.appendChild(editorWrapper);
+    }
+
     return container;
 }

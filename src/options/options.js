@@ -1,12 +1,17 @@
 // DeepOverlay Management Dashboard - Entry Point
 
-import { renderDashboard } from './utils/render.js';
-import { getAllData, getStorageBytes, getOcrQuota, removeStorageKey, clearAllStorage, setStorageData } from './utils/storage.js';
+import { renderDashboard, LIBRARY_PAGE_SIZE } from './utils/render.js';
+import { getAllData, getStorageBytes, getOcrQuota, removeStorageKey, clearAllStorage } from './utils/storage.js';
 import { formatBytes } from './utils/helpers.js';
 import { createBulkActionsBar, updateBulkActionsBar } from './components/BulkActions.js';
+import { filterAndGroupData } from './utils/filters.js';
 
 const listContainer = document.getElementById('dashboard-list');
 const searchInput = document.getElementById('search-input');
+const siteFilterEl = document.getElementById('library-site-filter');
+const paginationEl = document.getElementById('library-pagination');
+let libraryPage = 1;
+let librarySiteFilter = 'all';
 let allData = {}; // Cache
 window.allDataCache = allData; // Make available to components
 
@@ -14,54 +19,121 @@ window.allDataCache = allData; // Make available to components
 let selectedItems = new Set();
 let bulkActionsBar = null;
 
+function countWorks(data) {
+    const worksByDomain = filterAndGroupData(data, '');
+    let n = 0;
+    Object.keys(worksByDomain).forEach((d) => {
+        n += worksByDomain[d].length;
+    });
+    return n;
+}
+
+function initNav() {
+    const items = document.querySelectorAll('.do-nav-item[data-panel]');
+    const panels = document.querySelectorAll('.do-panel');
+
+    function show(panelId) {
+        items.forEach((btn) => {
+            const on = btn.dataset.panel === panelId;
+            btn.classList.toggle('active', on);
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        panels.forEach((p) => {
+            const on = p.id === `panel-${panelId}`;
+            p.classList.toggle('active', on);
+        });
+    }
+
+    items.forEach((btn) => {
+        btn.addEventListener('click', () => show(btn.dataset.panel));
+    });
+
+    show('library');
+}
+
+function syncManifestVersion() {
+    try {
+        const v = chrome.runtime.getManifest?.()?.version;
+        const el = document.getElementById('manager-version');
+        if (el && v) el.textContent = `v${v}`;
+    } catch {
+        /* ignore */
+    }
+}
+
+async function refreshCloudEndpoint() {
+    const el = document.getElementById('cloud-endpoint-url');
+    if (!el) return;
+    try {
+        const url = chrome.runtime.getURL('config.js');
+        const res = await fetch(url);
+        const t = await res.text();
+        const m = t.match(/BACKEND_URL\s*=\s*["']([^"']+)["']/);
+        el.textContent = m && m[1] ? m[1] : '(not configured)';
+    } catch {
+        el.textContent = '(unavailable)';
+    }
+}
+
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
+    syncManifestVersion();
+    initNav();
     loadDashboard();
     initTheme();
     initBulkActions();
 
-    // Search Listener
-    searchInput.addEventListener('input', (e) => {
-        renderDashboard(allData, e.target.value, listContainer, handleWorkDelete, handleUpdate);
-    });
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            libraryPage = 1;
+            renderLibrary();
+        });
+    }
 
-    // Buttons
+    if (siteFilterEl) {
+        siteFilterEl.addEventListener('change', () => {
+            librarySiteFilter = siteFilterEl.value;
+            libraryPage = 1;
+            renderLibrary();
+        });
+    }
+
     document.getElementById('refresh-btn').onclick = loadDashboard;
     document.getElementById('export-btn').onclick = exportData;
     document.getElementById('clear-btn').onclick = clearAllData;
     document.getElementById('theme-toggle').onclick = toggleTheme;
-    
-    // Debug: Expose storage inspection function to window
+
     window.inspectStorage = () => {
         chrome.storage.local.get(null, (items) => {
             console.log('=== Storage Contents ===');
             console.log('Keys:', Object.keys(items));
             console.log('Total keys:', Object.keys(items).length);
             console.table(items);
-            
+
             const size = JSON.stringify(items).length;
             console.log('Storage size:', size, 'bytes');
-            
+
             alert(`Storage contains ${Object.keys(items).length} keys:\n${Object.keys(items).join(', ')}\n\nCheck console (F12) for full details.`);
         });
     };
 
-    // Visual Settings Init
     initVisualSettings();
     initDisabledHosts();
 });
 
 function initBulkActions() {
+    if (!listContainer) return;
+
     bulkActionsBar = createBulkActionsBar(
         handleBulkDelete,
         handleBulkExport,
         handleClearSelection
     );
-    document.body.insertBefore(bulkActionsBar, listContainer);
+    bulkActionsBar.classList.add('do-bulk-actions');
+    listContainer.parentNode.insertBefore(bulkActionsBar, listContainer);
 }
 
 function handleBulkDelete() {
-    // TODO: Implement bulk delete
     console.log('Bulk delete:', Array.from(selectedItems));
     selectedItems.clear();
     updateBulkActionsBar(bulkActionsBar, 0);
@@ -69,15 +141,13 @@ function handleBulkDelete() {
 }
 
 function handleBulkExport() {
-    // TODO: Implement bulk export
     console.log('Bulk export:', Array.from(selectedItems));
 }
 
 function handleClearSelection() {
     selectedItems.clear();
     updateBulkActionsBar(bulkActionsBar, 0);
-    // Uncheck all checkboxes
-    document.querySelectorAll('input[type="checkbox"].bulk-select').forEach(cb => {
+    document.querySelectorAll('input[type="checkbox"].bulk-select').forEach((cb) => {
         cb.checked = false;
     });
 }
@@ -86,17 +156,38 @@ function handleWorkDelete(storageKey) {
     removeStorageKey(storageKey).then(() => {
         delete allData[storageKey];
         window.allDataCache = allData;
-        renderDashboard(allData, searchInput.value, listContainer, handleWorkDelete, handleUpdate);
+        renderLibrary();
+        updateLibraryNavCount(allData);
     });
 }
 
 function handleUpdate() {
-    // Refresh data and re-render
-    getAllData().then(items => {
+    getAllData().then((items) => {
         allData = items;
         window.allDataCache = allData;
-        renderDashboard(allData, searchInput.value, listContainer, handleWorkDelete, handleUpdate);
+        renderLibrary();
+        updateLibraryNavCount(allData);
     });
+}
+
+function renderLibrary() {
+    if (!listContainer) return;
+    const r = renderDashboard(allData, searchInput?.value || '', listContainer, handleWorkDelete, handleUpdate, {
+        page: libraryPage,
+        pageSize: LIBRARY_PAGE_SIZE,
+        paginationEl,
+        siteFilter: librarySiteFilter,
+        onPageChange: (p) => {
+            libraryPage = p;
+            renderLibrary();
+        }
+    });
+    if (r) libraryPage = r.currentPage;
+}
+
+function updateLibraryNavCount(data) {
+    const el = document.getElementById('library-nav-count');
+    if (el) el.textContent = String(countWorks(data || {}));
 }
 
 // --- Visual Settings Logic ---
@@ -122,6 +213,15 @@ function initDisabledHosts() {
     });
 }
 
+function setHexLabels() {
+    const border = document.getElementById('opt-border-color');
+    const fill = document.getElementById('opt-bg-color');
+    const bh = document.getElementById('border-hex-label');
+    const fh = document.getElementById('fill-hex-label');
+    if (border && bh) bh.textContent = border.value;
+    if (fill && fh) fh.textContent = fill.value;
+}
+
 function initVisualSettings() {
     const optOpacity = document.getElementById('opt-opacity');
     const valOpacity = document.getElementById('val-opacity');
@@ -129,40 +229,51 @@ function initVisualSettings() {
     const optBorder = document.getElementById('opt-border-color');
     const optBg = document.getElementById('opt-bg-color');
 
-    // Load saved or defaults
     chrome.storage.local.get(['overlay_opacity', 'overlay_border_color', 'overlay_bg_color'], (res) => {
         const op = res.overlay_opacity || 1.0;
         const borderColor = res.overlay_border_color || '#000000';
         const bgColor = res.overlay_bg_color || '#ffffff';
 
-        optOpacity.value = op;
-        valOpacity.innerText = op;
+        if (optOpacity) optOpacity.value = op;
+        if (valOpacity) valOpacity.innerText = String(op);
 
-        optBorder.value = borderColor;
-        optBg.value = bgColor;
+        if (optBorder) optBorder.value = borderColor;
+        if (optBg) optBg.value = bgColor;
+        setHexLabels();
     });
 
-    // Listeners
-    optOpacity.addEventListener('input', (e) => {
-        valOpacity.innerText = e.target.value;
-        chrome.storage.local.set({ overlay_opacity: e.target.value });
-    });
+    if (optOpacity) {
+        optOpacity.addEventListener('input', (e) => {
+            if (valOpacity) valOpacity.innerText = e.target.value;
+            chrome.storage.local.set({ overlay_opacity: e.target.value });
+        });
+    }
 
-    optBorder.addEventListener('input', (e) => {
-        chrome.storage.local.set({ overlay_border_color: e.target.value });
-    });
+    if (optBorder) {
+        optBorder.addEventListener('input', (e) => {
+            setHexLabels();
+            chrome.storage.local.set({ overlay_border_color: e.target.value });
+        });
+    }
 
-    optBg.addEventListener('input', (e) => {
-        chrome.storage.local.set({ overlay_bg_color: e.target.value });
-    });
+    if (optBg) {
+        optBg.addEventListener('input', (e) => {
+            setHexLabels();
+            chrome.storage.local.set({ overlay_bg_color: e.target.value });
+        });
+    }
 }
 
 // --- Theme Logic ---
 function initTheme() {
+    const doApp = document.getElementById('doApp');
     chrome.storage.local.get('theme', (result) => {
-        // Default is dark (no attribute), so only set 'light' if explicit
         if (result.theme === 'light') {
             document.body.setAttribute('data-theme', 'light');
+            doApp?.classList.add('do-light');
+        } else {
+            document.body.removeAttribute('data-theme');
+            doApp?.classList.remove('do-light');
         }
     });
 }
@@ -170,11 +281,14 @@ function initTheme() {
 function toggleTheme() {
     const isLight = document.body.getAttribute('data-theme') === 'light';
     const newTheme = isLight ? 'dark' : 'light';
+    const doApp = document.getElementById('doApp');
 
     if (newTheme === 'light') {
         document.body.setAttribute('data-theme', 'light');
+        doApp?.classList.add('do-light');
     } else {
         document.body.removeAttribute('data-theme');
+        doApp?.classList.remove('do-light');
     }
 
     chrome.storage.local.set({ theme: newTheme });
@@ -182,45 +296,50 @@ function toggleTheme() {
 
 // --- Core Logic ---
 function loadDashboard() {
-    getAllData().then(items => {
+    libraryPage = 1;
+    getAllData().then((items) => {
         allData = items;
         window.allDataCache = allData;
-        renderDashboard(allData, searchInput.value, listContainer, handleWorkDelete, handleUpdate);
+        renderLibrary();
+        updateLibraryNavCount(allData);
     });
 
-    // Update Storage Usage
-    getStorageBytes().then(bytes => {
+    getStorageBytes().then((bytes) => {
         const el = document.getElementById('storage-usage');
         if (!el) return;
-        el.innerText = "Storage: " + formatBytes(bytes);
+        el.textContent = `Storage: ${formatBytes(bytes)}`;
     });
 
-    // Update Cloud Usage Stats
-    getOcrQuota().then(count => {
+    getOcrQuota().then((count) => {
         const el = document.getElementById('usage-count');
-        if (!el) return;
-        el.innerText = count;
-        if (count >= 1000) el.style.color = "#d93025"; // Red if limit hit
+        const fill = document.getElementById('usage-progress-fill');
+        const rem = document.getElementById('usage-remaining');
+        const meta = document.getElementById('ocr-usage-meta');
+        if (el) {
+            el.textContent = String(count);
+            el.style.color = count >= 1000 ? 'var(--do-danger, #e05a5a)' : '';
+        }
+        if (fill) fill.style.width = `${Math.min(100, (count / 1000) * 100)}%`;
+        if (rem) rem.textContent = `${Math.max(0, 1000 - count)} remaining`;
+        if (meta) meta.textContent = `${((count / 1000) * 100).toFixed(1)}% used · resets monthly`;
     });
+
+    refreshCloudEndpoint();
 }
 
 function clearAllData() {
-    if (confirm("WARNING: Delete EVERYTHING?")) {
+    if (confirm('WARNING: Delete EVERYTHING?')) {
         clearAllStorage().then(() => {
             allData = {};
             window.allDataCache = allData;
             loadDashboard();
-            
-            // Also clear visual settings to truly reset everything
-            chrome.storage.local.remove([
-                'overlay_opacity',
-                'overlay_border_color',
-                'overlay_bg_color',
-                'theme'
-            ], () => {
-                // Reload page to reset visual settings UI
-                window.location.reload();
-            });
+
+            chrome.storage.local.remove(
+                ['overlay_opacity', 'overlay_border_color', 'overlay_bg_color', 'theme'],
+                () => {
+                    window.location.reload();
+                }
+            );
         });
     }
 }
