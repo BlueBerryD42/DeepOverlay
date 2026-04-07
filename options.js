@@ -54,6 +54,7 @@ function getSiteBadge(site) {
     "e-hentai": '<span class="site-badge site-badge-ehentai">E-H</span>',
     "x": '<span class="site-badge site-badge-x">X</span>',
     "pixiv": '<span class="site-badge site-badge-pixiv">P</span>',
+    "generic": '<span class="site-badge site-badge-other">G</span>',
     "other": '<span class="site-badge site-badge-other">•</span>'
   };
   return badges[site] || badges["other"];
@@ -82,6 +83,36 @@ function formatBytes(bytes) {
   else if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
   else return (bytes / (1024 * 1024)).toFixed(2) + " MB";
 }
+const INDEX_KEY = "_index";
+const QUOTA_KEY = "quota:ocr";
+const SCHEMA_VERSION_KEY = "_schemaVersion";
+function isDashboardMetaKey(storageKey) {
+  if (!storageKey || typeof storageKey !== "string") return true;
+  if (storageKey.startsWith("work:")) return false;
+  if (storageKey === INDEX_KEY || storageKey === SCHEMA_VERSION_KEY) return true;
+  if (storageKey === QUOTA_KEY || storageKey === "ocr_quota") return true;
+  if (storageKey === "theme" || storageKey === "settings") return true;
+  if (storageKey.startsWith("overlay_")) return true;
+  return false;
+}
+function removeIndexKey(index, storageKey) {
+  return (index || []).filter((e) => e.key !== storageKey);
+}
+function upsertIndexRow(index, storageKey, workEntry) {
+  const row = {
+    key: storageKey,
+    site: workEntry.site || "generic",
+    workId: workEntry.workId != null ? String(workEntry.workId) : "",
+    lastUpdated: workEntry.metadata?.lastUpdated || Date.now(),
+    baseUrl: workEntry.baseUrl || ""
+  };
+  const list = Array.isArray(index) ? [...index] : [];
+  const i = list.findIndex((e) => e.key === storageKey);
+  if (i >= 0) list[i] = row;
+  else list.push(row);
+  list.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
+  return list;
+}
 function getAllData() {
   return new Promise((resolve) => {
     chrome.storage.local.get(null, (items) => {
@@ -98,8 +129,11 @@ function getStorageBytes() {
 }
 function removeStorageKey(key) {
   return new Promise((resolve) => {
-    chrome.storage.local.remove(key, () => {
-      resolve();
+    chrome.storage.local.get([INDEX_KEY], (r) => {
+      const index = removeIndexKey(r[INDEX_KEY], key);
+      chrome.storage.local.remove([key], () => {
+        chrome.storage.local.set({ [INDEX_KEY]: index }, () => resolve());
+      });
     });
   });
 }
@@ -107,6 +141,14 @@ function setStorageData(data) {
   return new Promise((resolve) => {
     chrome.storage.local.set(data, () => {
       resolve();
+    });
+  });
+}
+function saveWorkEntryWithIndex(storageKey, workEntry) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([INDEX_KEY], (r) => {
+      const index = upsertIndexRow(r[INDEX_KEY], storageKey, workEntry);
+      chrome.storage.local.set({ [storageKey]: workEntry, [INDEX_KEY]: index }, () => resolve());
     });
   });
 }
@@ -119,9 +161,9 @@ function clearAllStorage() {
 }
 function getOcrQuota() {
   return new Promise((resolve) => {
-    chrome.storage.local.get("ocr_quota", (result) => {
+    chrome.storage.local.get([QUOTA_KEY, "ocr_quota"], (result) => {
       const currentMonth = (/* @__PURE__ */ new Date()).toISOString().slice(0, 7);
-      const data = result.ocr_quota || { count: 0, month: currentMonth };
+      const data = result[QUOTA_KEY] || result.ocr_quota || { count: 0, month: currentMonth };
       let count = data.count;
       if (data.month !== currentMonth) count = 0;
       resolve(count);
@@ -137,8 +179,15 @@ function updateBoxNoteInStorage(storageKey, imageSelector, boxIndex, newText, al
       workEntry.metadata.lastUpdated = Date.now();
       const update = {};
       update[storageKey] = workEntry;
-      return setStorageData(update).then(() => {
-        allData2[storageKey] = workEntry;
+      return new Promise((resolve) => {
+        chrome.storage.local.get([INDEX_KEY], (r) => {
+          const index = upsertIndexRow(r[INDEX_KEY], storageKey, workEntry);
+          update[INDEX_KEY] = index;
+          setStorageData(update).then(() => {
+            allData2[storageKey] = workEntry;
+            resolve();
+          });
+        });
       });
     }
   }
@@ -235,9 +284,7 @@ function createImageCard(storageKey, selector, imageData, workEntry, onImageDele
             if (workEntry2 && workEntry2.images && workEntry2.images[sel]) {
               workEntry2.images[sel].boxes.splice(idx, 1);
               workEntry2.metadata.lastUpdated = Date.now();
-              const update = {};
-              update[sk] = workEntry2;
-              chrome.storage.local.set(update, () => {
+              saveWorkEntryWithIndex(sk, workEntry2).then(() => {
                 window.allDataCache[sk] = workEntry2;
                 onBoxUpdate();
               });
@@ -315,9 +362,7 @@ function createWorkCard(work, onWorkDelete, onUpdate) {
         if (workEntry2 && workEntry2.images) {
           delete workEntry2.images[imageSelector];
           workEntry2.metadata.lastUpdated = Date.now();
-          const update = {};
-          update[storageKey] = workEntry2;
-          chrome.storage.local.set(update, () => {
+          saveWorkEntryWithIndex(storageKey, workEntry2).then(() => {
             window.allDataCache[storageKey] = workEntry2;
             onUpdate();
           });
@@ -402,7 +447,7 @@ function filterAndGroupData(allData2, query = "") {
   const lowerQuery = query.toLowerCase();
   const worksByDomain = {};
   Object.keys(allData2).forEach((storageKey) => {
-    if (storageKey === "theme" || storageKey === "ocr_quota" || storageKey === "overlay_opacity" || storageKey === "overlay_border_color" || storageKey === "overlay_bg_color") return;
+    if (isDashboardMetaKey(storageKey)) return;
     const val = allData2[storageKey];
     if (val && typeof val === "object" && val.images && val.workId !== void 0) {
       const workEntry = val;
@@ -584,6 +629,7 @@ Check console (F12) for full details.`);
     });
   };
   initVisualSettings();
+  initDisabledHosts();
 });
 function initBulkActions() {
   bulkActionsBar = createBulkActionsBar(
@@ -621,6 +667,22 @@ function handleUpdate() {
     allData = items;
     window.allDataCache = allData;
     renderDashboard(allData, searchInput.value, listContainer, handleWorkDelete, handleUpdate);
+  });
+}
+function initDisabledHosts() {
+  const ta = document.getElementById("opt-disabled-hosts");
+  if (!ta) return;
+  chrome.storage.local.get(["overlay_disabled_hosts"], (r) => {
+    const list = r.overlay_disabled_hosts;
+    ta.value = Array.isArray(list) ? list.join("\n") : "";
+  });
+  let t;
+  ta.addEventListener("input", () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const lines = ta.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      chrome.storage.local.set({ overlay_disabled_hosts: lines });
+    }, 300);
   });
 }
 function initVisualSettings() {

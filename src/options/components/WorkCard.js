@@ -2,7 +2,7 @@
 
 import { createImageCard } from './ImageCard.js';
 import { getSiteBadge, formatDate } from '../utils/helpers.js';
-import { removeStorageKey } from '../utils/storage.js';
+import { removeStorageKey, saveWorkEntryWithIndex } from '../utils/storage.js';
 
 export function createWorkCard(work, onWorkDelete, onUpdate) {
     const card = document.createElement('div');
@@ -78,10 +78,7 @@ export function createWorkCard(work, onWorkDelete, onUpdate) {
                 if (workEntry && workEntry.images) {
                     delete workEntry.images[imageSelector];
                     workEntry.metadata.lastUpdated = Date.now();
-                    // Save and refresh
-                    const update = {};
-                    update[storageKey] = workEntry;
-                    chrome.storage.local.set(update, () => {
+                    saveWorkEntryWithIndex(storageKey, workEntry).then(() => {
                         window.allDataCache[storageKey] = workEntry;
                         onUpdate();
                     });

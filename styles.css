@@ -1,17 +1,37 @@
 /* Font */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap');
 
-/* Container */
+/* Viewport shell: fixed so scroll-sized children do not expand <html> / body scroll metrics */
 #deep-overlay-root {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: 100vw;
+  height: 100%;
+  max-height: 100vh;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: visible;
   z-index: 2147483647;
   /* Max Z-Index */
   pointer-events: none;
   /* Pass-through when idle */
   cursor: crosshair;
   font-family: 'Roboto Mono', 'JetBrains Mono', monospace;
+}
+
+/* Document-sized layer: width/height + translate3d(-scroll) set in JS */
+#deep-overlay-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  z-index: 0;
 }
 
 /* Image Selection Mode: Show pointer cursor when selecting images */
@@ -28,6 +48,19 @@
   pointer-events: auto;
   /* CLEAN BACKGROUND - No dots */
   background-color: transparent;
+}
+
+/* Edit mode: layer must receive drags on empty page; view mode keeps layer none so only .deep-box hits */
+#deep-overlay-root.mode-edit #deep-overlay-layer {
+  pointer-events: auto;
+}
+
+/*
+ * Image pick: shell is pointer-events none so clicks reach <img> on the page.
+ * Without this, #deep-overlay-layer (above) would still capture hits and block image selection.
+ */
+#deep-overlay-root.mode-edit.image-selection-mode:not(.has-selected-images) #deep-overlay-layer {
+  pointer-events: none !important;
 }
 
 /* View Mode: Overlay allows click-through, but boxes intercept hover */

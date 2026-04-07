@@ -15,15 +15,17 @@
     },
     "scripts": {
         "build": "node build-config.js",
+        "build:adapters": "esbuild lib/site-adapters.mjs --bundle --format=iife --global-name=DeepOverlayAdapters --outfile=adapters.js",
         "build:options": "vite build && node scripts/copy-extension-ui.js",
         "dev:options": "vite build --watch",
-        "build:all": "npm run build && npm run build:options"
+        "build:all": "npm run build && npm run build:adapters && npm run build:options"
     },
     "dependencies": {
         "dotenv": "^16.3.1"
     },
     "devDependencies": {
         "@crxjs/vite-plugin": "^2.3.0",
+        "esbuild": "^0.25.0",
         "vite": "^7.3.1"
     }
 }

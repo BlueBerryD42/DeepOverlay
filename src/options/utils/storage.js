@@ -1,5 +1,7 @@
 // Chrome storage operations
 
+import { INDEX_KEY, QUOTA_KEY, removeIndexKey, upsertIndexRow } from './storageMeta.js';
+
 export function getAllData() {
     return new Promise((resolve) => {
         chrome.storage.local.get(null, (items) => {
@@ -18,8 +20,11 @@ export function getStorageBytes() {
 
 export function removeStorageKey(key) {
     return new Promise((resolve) => {
-        chrome.storage.local.remove(key, () => {
-            resolve();
+        chrome.storage.local.get([INDEX_KEY], (r) => {
+            const index = removeIndexKey(r[INDEX_KEY], key);
+            chrome.storage.local.remove([key], () => {
+                chrome.storage.local.set({ [INDEX_KEY]: index }, () => resolve());
+            });
         });
     });
 }
@@ -40,6 +45,16 @@ export function setStorageData(data) {
     });
 }
 
+/** Persists a work entry and keeps `_index` in sync (dashboard edits). */
+export function saveWorkEntryWithIndex(storageKey, workEntry) {
+    return new Promise((resolve) => {
+        chrome.storage.local.get([INDEX_KEY], (r) => {
+            const index = upsertIndexRow(r[INDEX_KEY], storageKey, workEntry);
+            chrome.storage.local.set({ [storageKey]: workEntry, [INDEX_KEY]: index }, () => resolve());
+        });
+    });
+}
+
 export function clearAllStorage() {
     return new Promise((resolve) => {
         chrome.storage.local.clear(() => {
@@ -50,9 +65,9 @@ export function clearAllStorage() {
 
 export function getOcrQuota() {
     return new Promise((resolve) => {
-        chrome.storage.local.get("ocr_quota", (result) => {
+        chrome.storage.local.get([QUOTA_KEY, 'ocr_quota'], (result) => {
             const currentMonth = new Date().toISOString().slice(0, 7);
-            const data = result.ocr_quota || { count: 0, month: currentMonth };
+            const data = result[QUOTA_KEY] || result.ocr_quota || { count: 0, month: currentMonth };
             let count = data.count;
             if (data.month !== currentMonth) count = 0;
             resolve(count);
@@ -69,8 +84,15 @@ export function updateBoxNoteInStorage(storageKey, imageSelector, boxIndex, newT
             workEntry.metadata.lastUpdated = Date.now();
             const update = {};
             update[storageKey] = workEntry;
-            return setStorageData(update).then(() => {
-                allData[storageKey] = workEntry; // Update cache
+            return new Promise((resolve) => {
+                chrome.storage.local.get([INDEX_KEY], (r) => {
+                    const index = upsertIndexRow(r[INDEX_KEY], storageKey, workEntry);
+                    update[INDEX_KEY] = index;
+                    setStorageData(update).then(() => {
+                        allData[storageKey] = workEntry;
+                        resolve();
+                    });
+                });
             });
         }
     }

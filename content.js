@@ -1,8 +1,25 @@
 // Scope isolation
 (function () {
     if (window.hasDeepOverlay) return;
-    window.hasDeepOverlay = true;
 
+    function isHostDisabledForOverlay(hosts, hostname) {
+        const h = hostname.toLowerCase();
+        for (const raw of hosts || []) {
+            let p = String(raw).trim().toLowerCase();
+            if (!p) continue;
+            if (p.startsWith('*.')) p = p.slice(2);
+            if (h === p || h.endsWith('.' + p)) return true;
+        }
+        return false;
+    }
+
+    function adapters() {
+        return globalThis.DeepOverlayAdapters;
+    }
+
+    /** Fixed viewport shell (#deep-overlay-root); does not affect document scroll metrics. */
+    let shell;
+    /** Document-sized layer (#deep-overlay-layer); holds notes; synced with scroll via transform. */
     let root, isEditMode = false;
     let lastUrl = window.location.href.split('?')[0];
 
@@ -24,11 +41,22 @@
 
     // --- Init ---
     function init() {
-        root = document.createElement('div');
-        root.id = 'deep-overlay-root';
-        root.classList.add('active');
+        if (!adapters()) {
+            console.error('DeepOverlay: adapters.js must load before content.js (check manifest).');
+            return;
+        }
 
-        document.documentElement.appendChild(root);
+        shell = document.createElement('div');
+        shell.id = 'deep-overlay-root';
+        shell.classList.add('active');
+
+        root = document.createElement('div');
+        root.id = 'deep-overlay-layer';
+
+        shell.appendChild(root);
+        (document.body || document.documentElement).appendChild(shell);
+
+        syncLayerScroll();
 
         // Initial setup
         checkUrlChange();
@@ -44,7 +72,7 @@
         window.addEventListener('click', (e) => {
             if (isEditMode) {
                 // Allow interaction with our own UI (root and children)
-                if (root.contains(e.target)) return;
+                if (shell.contains(e.target)) return;
                 
                 // Allow clicks on images when in image selection mode
                 if (imageSelectionMode && e.target.tagName === 'IMG') {
@@ -74,7 +102,7 @@
 
         // 2. Key Trap (Edit Mode)
         window.addEventListener('keydown', (e) => {
-            if (isEditMode && root.classList.contains('active')) {
+            if (isEditMode && shell.classList.contains('active')) {
                 // Allow typing ONLY in our own notes
                 if (e.target.classList.contains('deep-note-input')) {
                     // Let it pass to the textarea (don't preventDefault)
@@ -132,7 +160,7 @@
         chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (msg.action === "TOGGLE") toggleVisibility();
             else if (msg.action === "GET_STATUS") {
-                sendResponse({ active: root.classList.contains('active'), isEditMode });
+                sendResponse({ active: shell.classList.contains('active'), isEditMode });
             }
             else if (msg.action === "SET_EDIT_MODE") {
                 setEditMode(msg.enabled);
@@ -154,14 +182,14 @@
     // --- Visual Settings ---
     function applyVisualSettings() {
         chrome.storage.local.get(['overlay_opacity', 'overlay_border_color', 'overlay_bg_color'], (res) => {
-            if (!root) return;
+            if (!shell) return;
             const op = res.overlay_opacity || 1.0;
             const borderColor = res.overlay_border_color || '#000000';
             const bgColor = res.overlay_bg_color || '#ffffff';
 
             // Set CSS Variables for border and background colors (used in styles.css for .deep-box)
-            root.style.setProperty('--deep-border-color', borderColor);
-            root.style.setProperty('--deep-bg-color', bgColor);
+            shell.style.setProperty('--deep-border-color', borderColor);
+            shell.style.setProperty('--deep-bg-color', bgColor);
 
             // Apply opacity ONLY to the overlay boxes, not the root (to avoid affecting tooltips)
             document.querySelectorAll('.deep-box').forEach(box => {
@@ -215,12 +243,20 @@
         });
     }
 
+    /** Keeps the document layer sized to scroll extents without expanding <html> scroll overflow. */
+    function syncLayerScroll() {
+        if (!root) return;
+        const w = Math.max(document.documentElement.scrollWidth, window.innerWidth);
+        const h = Math.max(document.documentElement.scrollHeight, window.innerHeight);
+        root.style.width = w + 'px';
+        root.style.height = h + 'px';
+        root.style.transform = `translate3d(${-window.scrollX}px, ${-window.scrollY}px, 0)`;
+    }
+
     function updateBoxPositions() {
         if (!root) return;
 
-        // Update root size just in case
-        root.style.width = Math.max(document.documentElement.scrollWidth, window.innerWidth) + 'px';
-        root.style.height = Math.max(document.documentElement.scrollHeight, window.innerHeight) + 'px';
+        syncLayerScroll();
 
         // First, update all image overlay container positions
         selectedImages.forEach((containerData, img) => {
@@ -546,15 +582,15 @@
         const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
 
-        // 2. Temporarily hide root to see what's underneath
-        const prevDisplay = root.style.display;
-        root.style.display = 'none';
+        // 2. Temporarily hide overlay to see what's underneath
+        const prevDisplay = shell.style.display;
+        shell.style.display = 'none';
 
         // 3. Find Element
         const el = document.elementFromPoint(centerX, centerY);
 
         // 4. Restore
-        root.style.display = prevDisplay;
+        shell.style.display = prevDisplay;
 
         // If we found a valid element (not html/body ideally, but fallback is ok)
         // Actually, we want to anchor to something specific if possible.
@@ -806,10 +842,10 @@
     async function scanBox(box, textarea, metaBar, lang) {
 
         // --- 1. Client-Side Counter Check ---
-        const quotaKey = "ocr_quota";
+        const quotaKey = adapters().QUOTA_KEY;
         const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-        const quotaData = await chrome.storage.local.get(quotaKey);
-        let usage = quotaData[quotaKey] || { count: 0, month: currentMonth };
+        const quotaData = await chrome.storage.local.get([quotaKey, 'ocr_quota']);
+        let usage = quotaData[quotaKey] || quotaData.ocr_quota || { count: 0, month: currentMonth };
 
         if (usage.month !== currentMonth) {
             usage = { count: 0, month: currentMonth }; // Reset new month
@@ -1018,13 +1054,14 @@
         if (!chrome.runtime?.id) return;
         
         const currentUrl = window.location.href;
-        const workData = extractWorkId(currentUrl);
-        const storageKey = getStorageKey(currentUrl);
+        const workData = adapters().extractWorkMeta(currentUrl);
+        const storageKey = adapters().getStorageKey(currentUrl);
         const pageUrl = getCurrentPageUrl();
         const timestamp = Date.now();
+        const INDEX_KEY = adapters().INDEX_KEY;
         
         // Get or create work entry
-        chrome.storage.local.get([storageKey], (result) => {
+        chrome.storage.local.get([storageKey, INDEX_KEY], (result) => {
             let workEntry = result[storageKey] || {
                 workId: workData.workId,
                 site: workData.site,
@@ -1036,6 +1073,7 @@
                     urlVariants: []
                 }
             };
+            delete workEntry.legacyFlatBoxes;
             
             // Update metadata
             workEntry.metadata.lastUpdated = timestamp;
@@ -1135,9 +1173,10 @@
                 workEntry.images[selector] = imageData;
             });
             
-            // Save to storage
-            const data = {};
-            data[storageKey] = workEntry;
+            // Save to storage + _index
+            const index = Array.isArray(result[INDEX_KEY]) ? [...result[INDEX_KEY]] : [];
+            adapters().upsertIndexEntry(index, storageKey, workEntry);
+            const data = { [storageKey]: workEntry, [INDEX_KEY]: index };
             chrome.storage.local.set(data);
         });
     }
@@ -1146,15 +1185,23 @@
         if (!chrome.runtime?.id) return;
         
         const currentUrl = window.location.href;
-        const storageKey = getStorageKey(currentUrl);
+        const storageKey = adapters().getStorageKey(currentUrl);
         const pageUrl = getCurrentPageUrl();
         
         chrome.storage.local.get([storageKey], (result) => {
             if (chrome.runtime.lastError) return;
             
             const workEntry = result[storageKey];
-            if (!workEntry || !workEntry.images) {
-                // Try legacy format for backward compatibility
+            if (!workEntry) {
+                loadLegacyBoxes();
+                return;
+            }
+            if (workEntry.legacyFlatBoxes && Array.isArray(workEntry.legacyFlatBoxes)) {
+                loadLegacyFlatFromEntry(workEntry.legacyFlatBoxes);
+                updateImageSelectionUI();
+                return;
+            }
+            if (!workEntry.images) {
                 loadLegacyBoxes();
                 return;
             }
@@ -1249,105 +1296,45 @@
         });
     }
     
+    function appendLegacyBoxData(d) {
+        const b = document.createElement('div');
+        b.className = 'deep-box';
+        b.style.left = d.l; b.style.top = d.t;
+        b.style.width = d.w; b.style.height = d.h;
+        b.dataset.note = d.note;
+
+        if (d.anchor) {
+            b.dataset.anchorSelector = d.anchor;
+            b.dataset.rX = d.rX;
+            b.dataset.rY = d.rY;
+            if (d.rW) b.dataset.rW = d.rW;
+            if (d.rH) b.dataset.rH = d.rH;
+        }
+
+        setupBoxEvents(b);
+        applyVisualSettingsToBox(b);
+        root.appendChild(b);
+    }
+
+    /** Migrated flat box list stored under work:* entry (legacyFlatBoxes). */
+    function loadLegacyFlatFromEntry(boxes) {
+        boxes.forEach((d) => appendLegacyBoxData(d));
+        updateBoxPositions();
+        applyVisualSettings();
+    }
+
     function loadLegacyBoxes() {
-        // Fallback to old storage format for backward compatibility
+        // Fallback: raw URL key with array of boxes (pre–work-entry migration)
         const url = getUrl();
         chrome.storage.local.get([url], (result) => {
             if (chrome.runtime.lastError) return;
             const boxes = result[url] || [];
-            boxes.forEach(d => {
-                const b = document.createElement('div');
-                b.className = 'deep-box';
-                b.style.left = d.l; b.style.top = d.t;
-                b.style.width = d.w; b.style.height = d.h;
-                b.dataset.note = d.note;
-
-                // Load Anchor Data
-                if (d.anchor) {
-                    b.dataset.anchorSelector = d.anchor;
-                    b.dataset.rX = d.rX;
-                    b.dataset.rY = d.rY;
-                    if (d.rW) b.dataset.rW = d.rW;
-                    if (d.rH) b.dataset.rH = d.rH;
-                }
-
-                setupBoxEvents(b);
-                applyVisualSettingsToBox(b);
-                root.appendChild(b);
-            });
+            boxes.forEach((d) => appendLegacyBoxData(d));
             updateBoxPositions();
             applyVisualSettings();
         });
     }
 
-    // --- URL Normalization & Work ID Extraction ---
-    
-    function extractWorkId(url) {
-        try {
-            const urlObj = new URL(url);
-            const hostname = urlObj.hostname.toLowerCase();
-            const pathname = urlObj.pathname;
-            
-            // e-hentai: e-hentai.org/s/{hash}/{workId}-{page}
-            if (hostname.includes('e-hentai.org') || hostname.includes('exhentai.org')) {
-                const match = pathname.match(/\/s\/[^\/]+\/(\d+)-\d+/);
-                if (match) {
-                    return {
-                        workId: match[1],
-                        normalizedUrl: urlObj.origin + pathname.split('-')[0],
-                        site: 'e-hentai'
-                    };
-                }
-            }
-            
-            // X/Twitter: //x.com/{user}/status/{statusId}/photo/{photoNum}
-            if (hostname.includes('x.com') || hostname.includes('twitter.com')) {
-                const match = pathname.match(/\/status\/(\d+)/);
-                if (match) {
-                    return {
-                        workId: match[1],
-                        normalizedUrl: urlObj.origin + pathname.split('/photo/')[0],
-                        site: 'x'
-                    };
-                }
-            }
-            
-            // Pixiv: pixiv.net/en/artworks/{workId}#{imageNum}
-            if (hostname.includes('pixiv.net')) {
-                const match = pathname.match(/\/artworks\/(\d+)/);
-                if (match) {
-                    return {
-                        workId: match[1],
-                        normalizedUrl: urlObj.origin + pathname.split('#')[0],
-                        site: 'pixiv'
-                    };
-                }
-            }
-            
-            // Fallback: normalize URL by removing query params and fragments
-            return {
-                workId: null,
-                normalizedUrl: urlObj.origin + urlObj.pathname,
-                site: 'other'
-            };
-        } catch (e) {
-            // If URL parsing fails, return original URL
-            return {
-                workId: null,
-                normalizedUrl: url.split('?')[0].split('#')[0],
-                site: 'other'
-            };
-        }
-    }
-    
-    function getStorageKey(url) {
-        const workData = extractWorkId(url);
-        if (workData.workId) {
-            return `${workData.site}:${workData.workId}`;
-        }
-        return workData.normalizedUrl;
-    }
-    
     function getCurrentPageUrl() {
         // Get current URL without hash/query for page matching
         const url = window.location.href;
@@ -1392,18 +1379,18 @@
     function setEditMode(enabled) {
         isEditMode = enabled;
         if (enabled) {
-            root.classList.add('mode-edit');
-            root.classList.remove('mode-view');
+            shell.classList.add('mode-edit');
+            shell.classList.remove('mode-view');
         } else {
-            root.classList.add('mode-view');
-            root.classList.remove('mode-edit');
+            shell.classList.add('mode-view');
+            shell.classList.remove('mode-edit');
             document.querySelectorAll('.deep-edit-bubble').forEach(b => b.remove());
         }
     }
 
     function toggleVisibility() {
-        root.classList.toggle('active');
-        if (root.classList.contains('active')) {
+        shell.classList.toggle('active');
+        if (shell.classList.contains('active')) {
             updateBoxPositions();
             setEditMode(false);
         }
@@ -1418,7 +1405,7 @@
 
     function enableImageSelectionMode() {
         imageSelectionMode = true;
-        root.classList.add('image-selection-mode');
+        shell.classList.add('image-selection-mode');
         
         // Add hover listeners to all images
         document.querySelectorAll('img').forEach(img => {
@@ -1454,7 +1441,7 @@
 
     function disableImageSelectionMode() {
         imageSelectionMode = false;
-        root.classList.remove('image-selection-mode');
+        shell.classList.remove('image-selection-mode');
         
         // Remove hover effects from all images
         document.querySelectorAll('img').forEach(img => {
@@ -1561,7 +1548,7 @@
         
         // Update root class to indicate images are selected
         if (selectedImages.size > 0) {
-            root.classList.add('has-selected-images');
+            shell.classList.add('has-selected-images');
         }
         
         // Start position monitoring if not already running
@@ -1590,7 +1577,7 @@
         
         // Update root class to indicate if images are still selected
         if (selectedImages.size === 0) {
-            root.classList.remove('has-selected-images');
+            shell.classList.remove('has-selected-images');
             // Stop position monitoring when no images selected
             stopPositionMonitoring();
         }
@@ -1660,11 +1647,11 @@
     function updateImageSelectionUI() {
         // Update any UI indicators showing selected image count
         if (selectedImages.size > 0) {
-            root.classList.add('has-selected-images');
-            root.setAttribute('data-selected-count', selectedImages.size);
+            shell.classList.add('has-selected-images');
+            shell.setAttribute('data-selected-count', selectedImages.size);
         } else {
-            root.classList.remove('has-selected-images');
-            root.removeAttribute('data-selected-count');
+            shell.classList.remove('has-selected-images');
+            shell.removeAttribute('data-selected-count');
         }
     }
 
@@ -1693,7 +1680,7 @@
     
     // Check if image positions have changed and update if needed
     function checkImagePositions() {
-        if (selectedImages.size === 0 || !root.classList.contains('active')) {
+        if (selectedImages.size === 0 || !shell.classList.contains('active')) {
             return; // No images selected or overlay not active
         }
         
@@ -1745,7 +1732,7 @@
             }
             
             // Continue loop if we have selected images and overlay is active
-            if (selectedImages.size > 0 && root.classList.contains('active')) {
+            if (selectedImages.size > 0 && shell.classList.contains('active')) {
                 positionCheckInterval = requestAnimationFrame(checkLoop);
             } else {
                 positionCheckInterval = null;
@@ -1773,7 +1760,7 @@
             
             layoutCheckTimeout = setTimeout(() => {
                 // Check if we have selected images
-                if (selectedImages.size > 0 && root.classList.contains('active')) {
+                if (selectedImages.size > 0 && shell.classList.contains('active')) {
                     // Check positions and update if needed
                     checkImagePositions();
                 }
@@ -1800,6 +1787,20 @@
         }
     };
 
-    init();
+    function maybeStart() {
+        chrome.storage.local.get(['overlay_disabled_hosts'], (r) => {
+            if (chrome.runtime.lastError) {
+                window.hasDeepOverlay = true;
+                init();
+                return;
+            }
+            if (isHostDisabledForOverlay(r.overlay_disabled_hosts, location.hostname)) {
+                return;
+            }
+            window.hasDeepOverlay = true;
+            init();
+        });
+    }
+    maybeStart();
 
 })();

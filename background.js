@@ -1,4 +1,24 @@
 import { BACKEND_URL } from './config.js';
+import {
+  migrateStorageSnapshot,
+  SCHEMA_VERSION_KEY,
+  CURRENT_SCHEMA_VERSION,
+} from './lib/site-adapters.mjs';
+
+function runStorageMigration() {
+  chrome.storage.local.get([SCHEMA_VERSION_KEY], (r) => {
+    if ((r[SCHEMA_VERSION_KEY] ?? 0) >= CURRENT_SCHEMA_VERSION) return;
+    chrome.storage.local.get(null, (all) => {
+      const { set, remove } = migrateStorageSnapshot(all || {});
+      if (Object.keys(set).length === 0 && (!remove || remove.length === 0)) return;
+      chrome.storage.local.set(set, () => {
+        if (remove && remove.length) chrome.storage.local.remove(remove);
+      });
+    });
+  });
+}
+
+runStorageMigration();
 
 // Shortcuts
 chrome.commands.onCommand.addListener((command) => {
@@ -57,8 +77,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Force popup on install/startup to ensure it works
 chrome.runtime.onInstalled.addListener(() => {
+  runStorageMigration();
   chrome.action.setPopup({ popup: "popup.html" });
 });
 

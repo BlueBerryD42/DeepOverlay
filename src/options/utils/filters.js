@@ -1,14 +1,13 @@
 // Filtering and sorting logic
 
+import { isDashboardMetaKey } from './storageMeta.js';
+
 export function filterAndGroupData(allData, query = "") {
     const lowerQuery = query.toLowerCase();
     const worksByDomain = {}; // { "domain.com": [ {workEntry} ] }
 
     Object.keys(allData).forEach(storageKey => {
-        // Filter out non-work keys (settings, quotas, etc.)
-        if (storageKey === 'theme' || storageKey === 'ocr_quota' || 
-            storageKey === 'overlay_opacity' || storageKey === 'overlay_border_color' || 
-            storageKey === 'overlay_bg_color') return;
+        if (isDashboardMetaKey(storageKey)) return;
 
         const val = allData[storageKey];
         

@@ -17,6 +17,7 @@ export function getSiteBadge(site) {
         'e-hentai': '<span class="site-badge site-badge-ehentai">E-H</span>',
         'x': '<span class="site-badge site-badge-x">X</span>',
         'pixiv': '<span class="site-badge site-badge-pixiv">P</span>',
+        'generic': '<span class="site-badge site-badge-other">G</span>',
         'other': '<span class="site-badge site-badge-other">•</span>'
     };
     return badges[site] || badges['other'];

@@ -10,7 +10,7 @@
 
 
 
-
+
   <script type="module" crossorigin src="options.js"></script>
   <link rel="stylesheet" crossorigin href="options.css">
 </head>
@@ -135,6 +135,17 @@
       </div>
 
     </div>
+  </div>
+
+  <div class="dashboard-card" style="margin-bottom: 12px;">
+    <h2 class="dashboard-title" style="margin-top: 0;">
+      Sites without overlay
+    </h2>
+    <p style="font-size: 12px; color: var(--text-secondary); margin: 0 0 8px 0; line-height: 1.4;">
+      X and some sites warn when extensions inject into the page. Add hostnames here to skip DeepOverlay on those sites (one per line), then reload the tab.
+    </p>
+    <textarea id="opt-disabled-hosts" rows="4" placeholder="x.com&#10;twitter.com"
+      style="width: 100%; max-width: 560px; box-sizing: border-box; font-family: inherit; font-size: 12px; padding: 8px; border-radius: 6px; border: 1px solid var(--border-color, #ddd); background: var(--bg-secondary, #fff); color: var(--text-primary); resize: vertical;"></textarea>
   </div>
 
   <input type="text" id="search-input" placeholder="Search pages or note content...">

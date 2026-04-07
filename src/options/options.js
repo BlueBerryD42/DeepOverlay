@@ -48,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Visual Settings Init
     initVisualSettings();
+    initDisabledHosts();
 });
 
 function initBulkActions() {
@@ -99,6 +100,28 @@ function handleUpdate() {
 }
 
 // --- Visual Settings Logic ---
+function initDisabledHosts() {
+    const ta = document.getElementById('opt-disabled-hosts');
+    if (!ta) return;
+
+    chrome.storage.local.get(['overlay_disabled_hosts'], (r) => {
+        const list = r.overlay_disabled_hosts;
+        ta.value = Array.isArray(list) ? list.join('\n') : '';
+    });
+
+    let t;
+    ta.addEventListener('input', () => {
+        clearTimeout(t);
+        t = setTimeout(() => {
+            const lines = ta.value
+                .split(/\r?\n/)
+                .map((s) => s.trim())
+                .filter(Boolean);
+            chrome.storage.local.set({ overlay_disabled_hosts: lines });
+        }, 300);
+    });
+}
+
 function initVisualSettings() {
     const optOpacity = document.getElementById('opt-opacity');
     const valOpacity = document.getElementById('val-opacity');

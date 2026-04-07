@@ -2,7 +2,7 @@
 
 import { createBoxEditor } from './BoxEditor.js';
 import { formatPageUrl, truncateText } from '../utils/helpers.js';
-import { updateBoxNoteInStorage } from '../utils/storage.js';
+import { updateBoxNoteInStorage, saveWorkEntryWithIndex } from '../utils/storage.js';
 
 export function createImageCard(storageKey, selector, imageData, workEntry, onImageDelete, onBoxUpdate) {
     const imageCard = document.createElement('div');
@@ -120,9 +120,7 @@ export function createImageCard(storageKey, selector, imageData, workEntry, onIm
                         if (workEntry && workEntry.images && workEntry.images[sel]) {
                             workEntry.images[sel].boxes.splice(idx, 1);
                             workEntry.metadata.lastUpdated = Date.now();
-                            const update = {};
-                            update[sk] = workEntry;
-                            chrome.storage.local.set(update, () => {
+                            saveWorkEntryWithIndex(sk, workEntry).then(() => {
                                 window.allDataCache[sk] = workEntry;
                                 onBoxUpdate();
                             });
