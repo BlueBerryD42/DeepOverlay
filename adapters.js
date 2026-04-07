@@ -22,7 +22,6 @@ var DeepOverlayAdapters = (() => {
   __export(site_adapters_exports, {
     CURRENT_SCHEMA_VERSION: () => CURRENT_SCHEMA_VERSION,
     INDEX_KEY: () => INDEX_KEY,
-    QUOTA_KEY: () => QUOTA_KEY,
     SCHEMA_VERSION_KEY: () => SCHEMA_VERSION_KEY,
     extractWorkMeta: () => extractWorkMeta,
     getAdapter: () => getAdapter,
@@ -38,7 +37,6 @@ var DeepOverlayAdapters = (() => {
     upsertIndexEntry: () => upsertIndexEntry
   });
   var INDEX_KEY = "_index";
-  var QUOTA_KEY = "quota:ocr";
   var SCHEMA_VERSION_KEY = "_schemaVersion";
   var CURRENT_SCHEMA_VERSION = 3;
   function djb2Hex(str) {
@@ -207,7 +205,7 @@ var DeepOverlayAdapters = (() => {
   }
   function isReservedKey(key) {
     if (typeof key !== "string") return true;
-    if (key === INDEX_KEY || key === SCHEMA_VERSION_KEY || key === QUOTA_KEY) return true;
+    if (key === INDEX_KEY || key === SCHEMA_VERSION_KEY) return true;
     if (key === "theme" || key === "ocr_quota") return true;
     if (key.startsWith("overlay_")) return true;
     if (key === "settings") return true;
@@ -245,10 +243,6 @@ var DeepOverlayAdapters = (() => {
       return { set, remove };
     }
     const index = Array.isArray(all[INDEX_KEY]) ? [...all[INDEX_KEY]] : [];
-    if (all.ocr_quota != null && all[QUOTA_KEY] == null) {
-      set[QUOTA_KEY] = all.ocr_quota;
-      remove.push("ocr_quota");
-    }
     const processedWorkKeys = /* @__PURE__ */ new Set();
     for (const key of Object.keys(all)) {
       if (key === SCHEMA_VERSION_KEY || key === INDEX_KEY) continue;

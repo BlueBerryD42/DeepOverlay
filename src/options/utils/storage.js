@@ -1,6 +1,6 @@
 // Chrome storage operations
 
-import { INDEX_KEY, QUOTA_KEY, removeIndexKey, upsertIndexRow } from './storageMeta.js';
+import { INDEX_KEY, removeIndexKey, upsertIndexRow } from './storageMeta.js';
 
 export function getAllData() {
     return new Promise((resolve) => {
@@ -59,18 +59,6 @@ export function clearAllStorage() {
     return new Promise((resolve) => {
         chrome.storage.local.clear(() => {
             resolve();
-        });
-    });
-}
-
-export function getOcrQuota() {
-    return new Promise((resolve) => {
-        chrome.storage.local.get([QUOTA_KEY, 'ocr_quota'], (result) => {
-            const currentMonth = new Date().toISOString().slice(0, 7);
-            const data = result[QUOTA_KEY] || result.ocr_quota || { count: 0, month: currentMonth };
-            let count = data.count;
-            if (data.month !== currentMonth) count = 0;
-            resolve(count);
         });
     });
 }

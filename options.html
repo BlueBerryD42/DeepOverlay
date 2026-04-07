@@ -47,10 +47,6 @@
           <span class="do-nav-icon" aria-hidden="true">⚙</span>
           Settings
         </button>
-        <button type="button" class="do-nav-item" data-panel="cloud" id="nav-cloud">
-          <span class="do-nav-icon" aria-hidden="true">⬡</span>
-          Cloud / OCR
-        </button>
       </nav>
 
       <section class="do-panel active" id="panel-library" role="tabpanel" aria-labelledby="nav-library">
@@ -113,59 +109,6 @@
         </div>
       </section>
 
-      <section class="do-panel" id="panel-cloud" role="tabpanel" aria-labelledby="nav-cloud">
-        <div class="do-panel-head">
-          <span class="do-panel-title">Cloud / OCR</span>
-          <span class="do-panel-hint">— usage &amp; console links</span>
-        </div>
-        <div class="do-panel-body">
-          <div class="do-usage-block">
-            <div class="do-usage-label">Monthly OCR usage</div>
-            <div class="do-usage-nums">
-              <div class="do-usage-big" id="usage-count">…</div>
-              <div class="do-usage-denom">/ 1,000 requests</div>
-            </div>
-            <div class="do-progress" aria-hidden="true">
-              <div class="do-progress-fill" id="usage-progress-fill"></div>
-            </div>
-            <div class="do-usage-footer">
-              <span class="do-usage-meta" id="ocr-usage-meta"></span>
-              <span class="do-usage-remaining" id="usage-remaining"></span>
-            </div>
-          </div>
-
-          <div class="do-section-label do-link-section-title">Google Cloud console</div>
-          <div class="do-link-grid">
-            <a class="do-link-card" href="https://console.cloud.google.com/run" target="_blank" rel="noopener noreferrer">
-              <div class="do-link-name">Cloud Run</div>
-              <div class="do-link-desc">Manage OCR service</div>
-              <div class="do-link-ext">console.cloud.google.com ↗</div>
-            </a>
-            <a class="do-link-card" href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer">
-              <div class="do-link-name">Billing</div>
-              <div class="do-link-desc">Usage &amp; invoices</div>
-              <div class="do-link-ext">console.cloud.google.com ↗</div>
-            </a>
-            <a class="do-link-card" href="https://console.cloud.google.com/iam-admin/quotas?pageState=(%22allQuotasTable%22:(%22f%22:%22%255B%257B_22k_22_3A_22_22_2C_22t_22_3A10_2C_22v_22_3A_22_5C_22Cloud%2520Vision%2520API_5C%22_22_2C_22s_22_3Atrue_2C_22i_22_3A_22service_22%257D%255D%22))" target="_blank" rel="noopener noreferrer">
-              <div class="do-link-name">Quotas</div>
-              <div class="do-link-desc">Vision API limits</div>
-              <div class="do-link-ext">console.cloud.google.com ↗</div>
-            </a>
-            <a class="do-link-card" href="https://console.cloud.google.com/artifacts" target="_blank" rel="noopener noreferrer">
-              <div class="do-link-name">Artifacts</div>
-              <div class="do-link-desc">Container registry</div>
-              <div class="do-link-ext">console.cloud.google.com ↗</div>
-            </a>
-          </div>
-
-          <div class="do-divider"></div>
-          <div class="do-section-label">Backend URL (from config.js)</div>
-          <div class="do-endpoint-box">
-            <div class="do-endpoint-label">BACKEND_URL</div>
-            <div class="do-endpoint-url" id="cloud-endpoint-url">…</div>
-          </div>
-        </div>
-      </section>
     </div>
   </div>
 </body>

@@ -31,14 +31,12 @@ Traditional overlays pin notes to screen coordinates. DeepOverlay anchors each n
 | **Extension** | Manifest V3, service worker, content scripts, vanilla JS, dynamic CSS. |
 | **Layout** | `requestAnimationFrame`, `getBoundingClientRect` for layout-independent updates. |
 | **Build** | Vite + `@crxjs/vite-plugin` for options UI; scripts assemble the loadable extension. |
-| **Optional OCR** | Node/Express + Google Cloud Vision (`server/`), deployable to Cloud Run. **Disabled in the shipped background script** to avoid cost; can be re-enabled for demos or private builds. |
 
 ---
 
 ## Privacy and networking
 
 - **Notes and metadata** are stored locally via the browser; there is no account system in-tree.
-- **Optional OCR**: the repo includes a backend and manifest `host_permissions` for a Cloud Run URL when OCR is wired up. With OCR off (current default), no image data is sent for text recognition.
 
 ---
 
@@ -55,11 +53,9 @@ Load the extension folder in `chrome://extensions` (Developer mode → Load unpa
 
 | Script | Purpose |
 | :--- | :--- |
-| `npm run build` | Core extension build (`build-config.js`). |
 | `npm run build:options` | Vite build + copy UI assets. |
 | `npm run build:all` | Full build. |
-
-Configuration for optional backend URL: copy `config.example.js` to `config.js` and set `BACKEND_URL` as documented in your local setup.
+| `npm run build:adapters` | Build content-script adapter bundle (`adapters.js`). |
 
 ---
 

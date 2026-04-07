@@ -1,7 +1,7 @@
 // DeepOverlay Management Dashboard - Entry Point
 
 import { renderDashboard, LIBRARY_PAGE_SIZE } from './utils/render.js';
-import { getAllData, getStorageBytes, getOcrQuota, removeStorageKey, clearAllStorage } from './utils/storage.js';
+import { getAllData, getStorageBytes, removeStorageKey, clearAllStorage } from './utils/storage.js';
 import { formatBytes } from './utils/helpers.js';
 import { createBulkActionsBar, updateBulkActionsBar } from './components/BulkActions.js';
 import { filterAndGroupData } from './utils/filters.js';
@@ -58,20 +58,6 @@ function syncManifestVersion() {
         if (el && v) el.textContent = `v${v}`;
     } catch {
         /* ignore */
-    }
-}
-
-async function refreshCloudEndpoint() {
-    const el = document.getElementById('cloud-endpoint-url');
-    if (!el) return;
-    try {
-        const url = chrome.runtime.getURL('config.js');
-        const res = await fetch(url);
-        const t = await res.text();
-        const m = t.match(/BACKEND_URL\s*=\s*["']([^"']+)["']/);
-        el.textContent = m && m[1] ? m[1] : '(not configured)';
-    } catch {
-        el.textContent = '(unavailable)';
     }
 }
 
@@ -309,22 +295,6 @@ function loadDashboard() {
         if (!el) return;
         el.textContent = `Storage: ${formatBytes(bytes)}`;
     });
-
-    getOcrQuota().then((count) => {
-        const el = document.getElementById('usage-count');
-        const fill = document.getElementById('usage-progress-fill');
-        const rem = document.getElementById('usage-remaining');
-        const meta = document.getElementById('ocr-usage-meta');
-        if (el) {
-            el.textContent = String(count);
-            el.style.color = count >= 1000 ? 'var(--do-danger, #e05a5a)' : '';
-        }
-        if (fill) fill.style.width = `${Math.min(100, (count / 1000) * 100)}%`;
-        if (rem) rem.textContent = `${Math.max(0, 1000 - count)} remaining`;
-        if (meta) meta.textContent = `${((count / 1000) * 100).toFixed(1)}% used · resets monthly`;
-    });
-
-    refreshCloudEndpoint();
 }
 
 function clearAllData() {

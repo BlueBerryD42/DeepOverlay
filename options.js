@@ -130,13 +130,11 @@ function setExpandedState(key, expanded) {
   localStorage.setItem(`expanded_${key}`, expanded.toString());
 }
 const INDEX_KEY = "_index";
-const QUOTA_KEY = "quota:ocr";
 const SCHEMA_VERSION_KEY = "_schemaVersion";
 function isDashboardMetaKey(storageKey) {
   if (!storageKey || typeof storageKey !== "string") return true;
   if (storageKey.startsWith("work:")) return false;
   if (storageKey === INDEX_KEY || storageKey === SCHEMA_VERSION_KEY) return true;
-  if (storageKey === QUOTA_KEY || storageKey === "ocr_quota") return true;
   if (storageKey === "theme" || storageKey === "settings") return true;
   if (storageKey.startsWith("overlay_")) return true;
   return false;
@@ -202,17 +200,6 @@ function clearAllStorage() {
   return new Promise((resolve) => {
     chrome.storage.local.clear(() => {
       resolve();
-    });
-  });
-}
-function getOcrQuota() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get([QUOTA_KEY, "ocr_quota"], (result) => {
-      const currentMonth = (/* @__PURE__ */ new Date()).toISOString().slice(0, 7);
-      const data = result[QUOTA_KEY] || result.ocr_quota || { count: 0, month: currentMonth };
-      let count = data.count;
-      if (data.month !== currentMonth) count = 0;
-      resolve(count);
     });
   });
 }
@@ -1054,19 +1041,6 @@ function syncManifestVersion() {
   } catch {
   }
 }
-async function refreshCloudEndpoint() {
-  const el = document.getElementById("cloud-endpoint-url");
-  if (!el) return;
-  try {
-    const url = chrome.runtime.getURL("config.js");
-    const res = await fetch(url);
-    const t = await res.text();
-    const m = t.match(/BACKEND_URL\s*=\s*["']([^"']+)["']/);
-    el.textContent = m && m[1] ? m[1] : "(not configured)";
-  } catch {
-    el.textContent = "(unavailable)";
-  }
-}
 document.addEventListener("DOMContentLoaded", () => {
   syncManifestVersion();
   initNav();
@@ -1263,20 +1237,6 @@ function loadDashboard() {
     if (!el) return;
     el.textContent = `Storage: ${formatBytes(bytes)}`;
   });
-  getOcrQuota().then((count) => {
-    const el = document.getElementById("usage-count");
-    const fill = document.getElementById("usage-progress-fill");
-    const rem = document.getElementById("usage-remaining");
-    const meta = document.getElementById("ocr-usage-meta");
-    if (el) {
-      el.textContent = String(count);
-      el.style.color = count >= 1e3 ? "var(--do-danger, #e05a5a)" : "";
-    }
-    if (fill) fill.style.width = `${Math.min(100, count / 1e3 * 100)}%`;
-    if (rem) rem.textContent = `${Math.max(0, 1e3 - count)} remaining`;
-    if (meta) meta.textContent = `${(count / 1e3 * 100).toFixed(1)}% used · resets monthly`;
-  });
-  refreshCloudEndpoint();
 }
 function clearAllData() {
   if (confirm("WARNING: Delete EVERYTHING?")) {

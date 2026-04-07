@@ -1,4 +1,3 @@
-import { BACKEND_URL } from './config.js';
 import {
   migrateStorageSnapshot,
   SCHEMA_VERSION_KEY,
@@ -49,31 +48,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     });
     return true; // Keep channel open for async response
-  }
-  if (request.action === "PERFORM_OCR") {
-    const { image } = request;
-    // const BACKEND_URL = process.env.BE_URL; // Removed
-    // BACKEND_URL is imported from config.js
-
-    // --- CLOUD RUN DISABLED TO SAVE COST ---
-    // fetch(BACKEND_URL, {
-    //   method: "POST",
-    //   headers: {
-    //     "Content-Type": "application/json"
-    //   },
-    //   body: JSON.stringify({ image: image })
-    // })
-    //   .then(response => response.json())
-    //   .then(data => sendResponse({ result: data })) // Pass full result object
-    //   .catch(error => {
-    //     console.error("OCR Fetch Error:", error);
-    //     sendResponse({ error: error.message });
-    //   });
-
-    // Immediate fallback response
-    sendResponse({ error: "Cloud OCR is currently disabled by the user to save costs." });
-
-    return true; // async response
   }
 });
 
