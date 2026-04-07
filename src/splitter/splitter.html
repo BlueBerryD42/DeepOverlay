@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Text splitter — DeepOverlay</title>
+
+  <script type="module" crossorigin src="./splitter.js"></script>
+</head>
+
+<body>
+  <header>
+    <h1>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M4 15h16v-2H4v2zm0 4h16v-2H4v2zm0-8h16V9H4v2zm0-6v2h16V5H4z" />
+      </svg>
+      Text splitter
+    </h1>
+    <div class="header-actions">
+      <button type="button" id="theme-toggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+        <svg class="icon" viewBox="0 0 24 24">
+          <path
+            d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-3.03 0-5.5-2.47-5.5-5.5 0-1.82.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z" />
+        </svg>
+      </button>
+      <button type="button" id="back-dashboard">Back to Dashboard</button>
+    </div>
+  </header>
+
+  <section class="dashboard-card">
+    <p class="intro">Paste long text (e.g. for translation). Chunks are at most <strong>5000 characters</strong>, split on
+      paragraph boundaries (<code>\n\n</code>) when possible.</p>
+    <label for="input-text" class="sr-only">Text to split</label>
+    <textarea id="input-text" rows="12" placeholder="Paste your text here…" spellcheck="false"></textarea>
+    <div class="toolbar">
+      <button type="button" id="split-btn">Split</button>
+      <span id="summary" class="summary" aria-live="polite"></span>
+    </div>
+  </section>
+
+  <section id="parts-section" class="parts-section hidden">
+    <h2 class="dashboard-title">Parts</h2>
+    <ul id="parts-list" class="parts-list"></ul>
+  </section>
+</body>
+
+</html>

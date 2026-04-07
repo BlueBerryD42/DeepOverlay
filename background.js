@@ -53,9 +53,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Immediate fallback response
     sendResponse({ error: "Cloud OCR is currently disabled by the user to save costs." });
 
-    return true; // Async
-
-    return true; // Async
+    return true; // async response
   }
 });
 

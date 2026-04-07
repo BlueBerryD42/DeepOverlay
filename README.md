@@ -1,64 +1,85 @@
 # DeepOverlay
 
-A high-performance, minimalist sticky note overlay for the modern web. Built for research, translation tracking, and content organization.
+**DOM-anchored sticky notes for the web** — notes stay tied to the page elements they annotate, scale with responsive layouts, and stay organized in a searchable dashboard. Built as a Manifest V3 Chrome extension with a privacy-first, local-first data model.
+
+Useful for research, translation workflows, and annotating complex UIs where absolute positioning would break.
 
 ---
 
-## Core Capabilities
+## Why this exists
 
-### Smart Element Anchoring
-Unlike traditional overlays that use absolute page coordinates, DeepOverlay anchors notes to the specific DOM elements underneath them. This ensures your notes remain attached to the correct content even on complex, responsive websites.
-
-### Relative Scaling
-DeepOverlay calculates size ratios between your notes and their anchor elements. When an image or container shrinks due to browser resizing or mobile layouts, your notes scale proportionally to maintain context.
-
-### Interaction Isolation
-- **Edit Mode**: Completely blocks interaction with the underlying page, allowing you to draw and manage notes without accidental clicks or layout shifts.
-- **Input Guard**: Captures keyboard events within note textareas to prevent website shortcuts (like video pausing or scrolling) from triggering while you type.
-- **View Mode**: A passive, pointer-event-free layer that only displays your information when needed.
+Traditional overlays pin notes to screen coordinates. DeepOverlay anchors each note to the underlying DOM node and tracks size ratios so notes remain meaningful when the page reflows or the viewport changes.
 
 ---
 
-## Features
+## Highlights
 
-- **Management Dashboard**: A centralized hub to search, edit, and organize all your notes.
-- **Domain Grouping**: Automatically groups notes by website domain for efficient navigation through large datasets.
-- **Always On Architecture**: Injected automatically on page load for zero-latency access to your data.
-- **Privacy First**: All data is stored locally via Browser Storage. No external servers or network requests.
-- **Storage Monitor**: Real-time tracking of data usage within the dashboard.
-
----
-
-## Usage
-
-| Action | Control |
+| Area | What it does |
 | :--- | :--- |
-| **Toggle Visibility** | Alt + Shift + O |
-| **Toggle Edit Mode** | Extension Popup |
-| **Manage Data** | Extension Dashboard |
-| **Create Note** | Click and Drag (Edit Mode) |
-| **Move / Resize** | Grab or Handle (Edit Mode) |
+| **Anchoring** | Notes attach to elements under the cursor, not raw `(x, y)` positions. |
+| **Responsive behavior** | Relative scaling when containers resize (e.g. images, flex layouts). |
+| **Modes** | Edit mode isolates interaction; view mode is non-interactive; input guard keeps site shortcuts from firing while typing. |
+| **Dashboard** | Search, bulk actions, domain grouping, storage usage visibility. |
+| **Data** | Primary storage is `chrome.storage.local` on the user’s machine. |
 
 ---
 
-## Technical Architecture
+## Tech stack
 
-The extension is designed for maximum performance and minimal browser footprint:
-
-- **Frontend**: Vanilla Javascript & Dynamic CSS.
-- **Persistence**: Managed through `chrome.storage.local`.
-- **Layout Engine**: Uses `requestAnimationFrame` and `getBoundingClientRect` for layout-independent positioning.
-- **Theme**: Minimalist, high-contrast aesthetic.
-
----
-
-## Installation
-
-1. Clone this repository.
-2. Open Chrome and navigate to `chrome://extensions`.
-3. Enable **Developer mode** (top right).
-4. Click **Load unpacked** and select the `DeepOverlay` directory.
+| Layer | Details |
+| :--- | :--- |
+| **Extension** | Manifest V3, service worker, content scripts, vanilla JS, dynamic CSS. |
+| **Layout** | `requestAnimationFrame`, `getBoundingClientRect` for layout-independent updates. |
+| **Build** | Vite + `@crxjs/vite-plugin` for options UI; scripts assemble the loadable extension. |
+| **Optional OCR** | Node/Express + Google Cloud Vision (`server/`), deployable to Cloud Run. **Disabled in the shipped background script** to avoid cost; can be re-enabled for demos or private builds. |
 
 ---
 
-### Developed for Precise Content Overlay Organization
+## Privacy and networking
+
+- **Notes and metadata** are stored locally via the browser; there is no account system in-tree.
+- **Optional OCR**: the repo includes a backend and manifest `host_permissions` for a Cloud Run URL when OCR is wired up. With OCR off (current default), no image data is sent for text recognition.
+
+---
+
+## Development
+
+**Requirements:** Node.js 18+ recommended.
+
+```bash
+npm install
+npm run build:all
+```
+
+Load the extension folder in `chrome://extensions` (Developer mode → Load unpacked).
+
+| Script | Purpose |
+| :--- | :--- |
+| `npm run build` | Core extension build (`build-config.js`). |
+| `npm run build:options` | Vite build + copy UI assets. |
+| `npm run build:all` | Full build. |
+
+Configuration for optional backend URL: copy `config.example.js` to `config.js` and set `BACKEND_URL` as documented in your local setup.
+
+---
+
+## Keyboard shortcut
+
+| Action | Default |
+| :--- | :--- |
+| Toggle overlay visibility | **Alt + Shift + O** |
+
+---
+
+## Roadmap (good next steps for portfolio quality)
+
+- Automated **lint + build** in CI (e.g. GitHub Actions).
+- **Unit tests** for anchoring/math and storage helpers.
+- **Screenshots or a short demo GIF** in the README for recruiters.
+- **Chrome Web Store** listing (if you want public distribution).
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

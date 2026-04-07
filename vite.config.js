@@ -4,29 +4,37 @@ import { resolve } from 'path';
 export default defineConfig({
   base: './',
   build: {
-    outDir: '.',
-    emptyOutDir: false, // Don't delete other files
+    modulePreload: false,
+    outDir: 'dist',
+    emptyOutDir: true,
     rollupOptions: {
       input: {
-        options: resolve(__dirname, 'src/options/options.html')
+        options: resolve(__dirname, 'src/options/options.html'),
+        splitter: resolve(__dirname, 'src/splitter/splitter.html')
       },
       output: {
-        entryFileNames: 'options.js',
-        chunkFileNames: 'options-[name].js',
+        entryFileNames: (chunkInfo) => {
+          if (chunkInfo.name === 'options') return 'options.js';
+          if (chunkInfo.name === 'splitter') return 'splitter.js';
+          return '[name].js';
+        },
+        chunkFileNames: 'vite-chunk-[name].js',
         assetFileNames: (assetInfo) => {
-          // Handle HTML files
-          if (assetInfo.name && assetInfo.name.includes('options.html')) {
+          const names = assetInfo.names || [];
+          const n = names[0] ?? assetInfo.name ?? '';
+          if (typeof n === 'string' && n.endsWith('.html')) {
+            if (n.includes('splitter')) return 'splitter.html';
             return 'options.html';
           }
-          // Handle CSS files
-          if (assetInfo.name && assetInfo.name.endsWith('.css')) {
+          if (typeof n === 'string' && n.endsWith('.css')) {
+            if (n.includes('splitter')) return 'splitter.css';
             return 'options.css';
           }
-          return 'assets/[name].[ext]';
+          return 'assets/[name]-[hash][extname]';
         }
       }
     },
-    cssCodeSplit: false, // Bundle all CSS into one file
+    cssCodeSplit: true,
     minify: false // Keep readable for debugging
   },
   server: {
@@ -34,4 +42,3 @@ export default defineConfig({
     open: false
   }
 });
-

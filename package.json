@@ -1,10 +1,21 @@
 {
     "name": "deep-overlay-extension",
     "version": "1.0.0",
-    "description": "Chrome extension for DeepOverlay",
+    "description": "Chrome MV3 extension: DOM-anchored web annotations with local storage and optional OCR backend",
+    "license": "MIT",
+    "keywords": [
+        "chrome-extension",
+        "manifest-v3",
+        "annotation",
+        "sticky-notes",
+        "browser-extension"
+    ],
+    "engines": {
+        "node": ">=18"
+    },
     "scripts": {
         "build": "node build-config.js",
-        "build:options": "vite build",
+        "build:options": "vite build && node scripts/copy-extension-ui.js",
         "dev:options": "vite build --watch",
         "build:all": "npm run build && npm run build:options"
     },
