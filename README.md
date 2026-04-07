@@ -71,15 +71,6 @@ Configuration for optional backend URL: copy `config.example.js` to `config.js` 
 
 ---
 
-## Roadmap (good next steps for portfolio quality)
-
-- Automated **lint + build** in CI (e.g. GitHub Actions).
-- **Unit tests** for anchoring/math and storage helpers.
-- **Screenshots or a short demo GIF** in the README for recruiters.
-- **Chrome Web Store** listing (if you want public distribution).
-
----
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
