@@ -5,7 +5,6 @@ const statusDot = document.getElementById('status-ind');
 const editCheck = document.getElementById('edit-check');
 const toggleBtn = document.getElementById('toggle-btn');
 const dashboardBtn = document.getElementById('dashboard-btn');
-const splitterBtn = document.getElementById('splitter-btn');
 
 // --- Init: Get Status ---
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -51,11 +50,6 @@ toggleBtn.addEventListener('click', () => {
 
 dashboardBtn.addEventListener('click', () => {
     chrome.runtime.openOptionsPage();
-    window.close();
-});
-
-splitterBtn.addEventListener('click', () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('splitter.html') });
     window.close();
 });
 

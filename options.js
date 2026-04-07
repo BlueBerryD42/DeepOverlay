@@ -1,4 +1,3 @@
-/* empty css                   */
 function createBoxEditor(storageKey, imageSelector, boxIndex, boxData, onUpdate, opts = {}) {
   const compact = opts.compact === true;
   const container = document.createElement("div");

@@ -9,13 +9,11 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        options: resolve(__dirname, 'src/options/options.html'),
-        splitter: resolve(__dirname, 'src/splitter/splitter.html')
+        options: resolve(__dirname, 'src/options/options.html')
       },
       output: {
         entryFileNames: (chunkInfo) => {
           if (chunkInfo.name === 'options') return 'options.js';
-          if (chunkInfo.name === 'splitter') return 'splitter.js';
           return '[name].js';
         },
         chunkFileNames: 'vite-chunk-[name].js',
@@ -23,11 +21,9 @@ export default defineConfig({
           const names = assetInfo.names || [];
           const n = names[0] ?? assetInfo.name ?? '';
           if (typeof n === 'string' && n.endsWith('.html')) {
-            if (n.includes('splitter')) return 'splitter.html';
             return 'options.html';
           }
           if (typeof n === 'string' && n.endsWith('.css')) {
-            if (n.includes('splitter')) return 'splitter.css';
             return 'options.css';
           }
           return 'assets/[name]-[hash][extname]';

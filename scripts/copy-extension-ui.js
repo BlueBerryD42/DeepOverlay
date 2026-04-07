@@ -31,8 +31,6 @@ function flattenHtml(relDistPath, outBasename) {
 
 copyIfExists(path.join(dist, 'options.js'), path.join(root, 'options.js'));
 copyIfExists(path.join(dist, 'options.css'), path.join(root, 'options.css'));
-copyIfExists(path.join(dist, 'splitter.js'), path.join(root, 'splitter.js'));
-copyIfExists(path.join(dist, 'splitter.css'), path.join(root, 'splitter.css'));
 
 for (const f of fs.readdirSync(dist)) {
   if (f.startsWith('vite-chunk-') && f.endsWith('.js')) {
@@ -41,4 +39,3 @@ for (const f of fs.readdirSync(dist)) {
 }
 
 flattenHtml('src/options/options.html', 'options.html');
-flattenHtml('src/splitter/splitter.html', 'splitter.html');
