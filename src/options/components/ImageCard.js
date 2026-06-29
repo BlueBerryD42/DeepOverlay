@@ -2,7 +2,7 @@
 
 import { createBoxEditor } from './BoxEditor.js';
 import { formatPageUrl, truncateText } from '../utils/helpers.js';
-import { updateBoxNoteInStorage, saveWorkEntryWithIndex } from '../utils/storage.js';
+import { updateBoxNoteInStorage, saveWorkEntryWithIndex, getWorkImgRecord, saveWorkImgRecord } from '../utils/storage.js';
 
 /**
  * @param {{ compact?: boolean }} [opts] compact: single-line header, tight box editors (library thumb view)
@@ -130,7 +130,34 @@ export function createImageCard(storageKey, selector, imageData, workEntry, onIm
                 (sk, sel, idx, text) => {
                     if (text === null) {
                         const we = window.allDataCache[sk];
-                        if (we && we.images && we.images[sel]) {
+                        const meta = we?.images?.[sel];
+                        const refKey = meta?.refKey;
+
+                        // New split-storage format
+                        if (refKey) {
+                            getWorkImgRecord(refKey).then((imgRec) => {
+                                if (!imgRec?.boxes) return;
+                                imgRec.boxes.splice(idx, 1);
+                                return saveWorkImgRecord(refKey, imgRec).then(() => {
+                                    const notes = (imgRec.boxes || [])
+                                        .map((b) => (b.note || '').trim())
+                                        .filter(Boolean)
+                                        .join('\n');
+                                    const notePreview = notes.length > 180 ? `${notes.slice(0, 180)}…` : notes;
+                                    meta.boxCount = imgRec.boxes.length;
+                                    meta.notePreview = notePreview;
+                                    we.metadata.lastUpdated = Date.now();
+                                    return saveWorkEntryWithIndex(sk, we).then(() => {
+                                        window.allDataCache[sk] = we;
+                                        onBoxUpdate();
+                                    });
+                                });
+                            });
+                            return;
+                        }
+
+                        // Old format fallback
+                        if (we && we.images && we.images[sel] && we.images[sel].boxes) {
                             we.images[sel].boxes.splice(idx, 1);
                             we.metadata.lastUpdated = Date.now();
                             saveWorkEntryWithIndex(sk, we).then(() => {

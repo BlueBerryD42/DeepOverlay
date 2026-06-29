@@ -29,6 +29,7 @@ var DeepOverlayAdapters = (() => {
     isReservedKey: () => isReservedKey,
     isWorkKey: () => isWorkKey,
     makeImageStorageKey: () => makeImageStorageKey,
+    makeWorkImgKey: () => makeWorkImgKey,
     migrateImageKeysInWorkEntry: () => migrateImageKeysInWorkEntry,
     migrateStorageSnapshot: () => migrateStorageSnapshot,
     parseImageStorageKey: () => parseImageStorageKey,
@@ -38,11 +39,17 @@ var DeepOverlayAdapters = (() => {
   });
   var INDEX_KEY = "_index";
   var SCHEMA_VERSION_KEY = "_schemaVersion";
-  var CURRENT_SCHEMA_VERSION = 3;
+  var CURRENT_SCHEMA_VERSION = 4;
   function djb2Hex(str) {
     let h = 5381;
     for (let i = 0; i < str.length; i++) h = (h << 5) + h + str.charCodeAt(i);
     return (h >>> 0).toString(16);
+  }
+  function makeWorkImgKey(storageKey, imageKey) {
+    const parts = String(storageKey || "").split(":");
+    const site = parts[1] || "generic";
+    const workId = parts.slice(2).join(":") || "";
+    return `workimg:${site}:${workId}:${djb2Hex(String(imageKey || ""))}`;
   }
   var EHentai = {
     name: "e-hentai",
@@ -284,6 +291,33 @@ var DeepOverlayAdapters = (() => {
         const we = { ...val };
         normalizeWorkEntryFields(we, newKey);
         migrateImageKeysInWorkEntry(we);
+        if (we.images && typeof we.images === "object") {
+          const nextImages = { ...we.images };
+          for (const imageKey of Object.keys(nextImages)) {
+            const img = nextImages[imageKey];
+            if (!img || typeof img !== "object") continue;
+            if (img.refKey) continue;
+            if (!Array.isArray(img.boxes)) continue;
+            const refKey = makeWorkImgKey(newKey, imageKey);
+            set[refKey] = {
+              pageUrl: img.pageUrl || null,
+              selector: img.selector || parseImageStorageKey(imageKey).cssSelector,
+              src: img.src || "",
+              boxes: img.boxes || []
+            };
+            const allNotes = (img.boxes || []).map((b) => (b?.note || "").trim()).filter(Boolean).join("\n");
+            const notePreview = allNotes.length > 180 ? `${allNotes.slice(0, 180)}\u2026` : allNotes;
+            nextImages[imageKey] = {
+              refKey,
+              pageUrl: img.pageUrl || null,
+              selector: img.selector || parseImageStorageKey(imageKey).cssSelector,
+              src: img.src || "",
+              boxCount: (img.boxes || []).length,
+              notePreview
+            };
+          }
+          we.images = nextImages;
+        }
         upsertIndexEntry(index, newKey, we);
         processedWorkKeys.add(newKey);
         set[newKey] = we;

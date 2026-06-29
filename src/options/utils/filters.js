@@ -2,6 +2,50 @@
 
 import { isDashboardMetaKey } from './storageMeta.js';
 
+/** Best available recency timestamp for a dashboard work row. */
+export function getWorkTimestamp(work) {
+    if (work.legacy) return 0;
+    const meta = work.workEntry?.metadata;
+    return meta?.lastUpdated || meta?.firstSeen || 0;
+}
+
+/** Stable newest-first compare for library rows. */
+export function compareWorks(a, b, order = 'desc') {
+    const aVal = getWorkTimestamp(a);
+    const bVal = getWorkTimestamp(b);
+    if (aVal !== bVal) {
+        return order === 'asc' ? aVal - bVal : bVal - aVal;
+    }
+    return (a.storageKey || '').localeCompare(b.storageKey || '');
+}
+
+/**
+ * Order works using `_index` (newest first) when present, then any leftovers.
+ * @param {Record<string, unknown>} allData
+ * @param {Array<{ storageKey: string }>} works
+ */
+export function orderWorksForDashboard(allData, works) {
+    const byKey = new Map(works.map((w) => [w.storageKey, w]));
+    const ordered = [];
+    const seen = new Set();
+    const index = Array.isArray(allData._index) ? allData._index : [];
+
+    for (const row of index) {
+        const key = row?.key;
+        if (!key || seen.has(key)) continue;
+        const work = byKey.get(key);
+        if (!work) continue;
+        ordered.push(work);
+        seen.add(key);
+    }
+
+    const remaining = works.filter((w) => !seen.has(w.storageKey));
+    remaining.sort((a, b) => compareWorks(a, b, 'desc'));
+    ordered.push(...remaining);
+
+    return ordered;
+}
+
 export function filterAndGroupData(allData, query = "") {
     const lowerQuery = query.toLowerCase();
     const worksByDomain = {}; // { "domain.com": [ {workEntry} ] }
@@ -39,11 +83,15 @@ export function filterAndGroupData(allData, query = "") {
             Object.keys(workEntry.images || {}).forEach(selector => {
                 const imageData = workEntry.images[selector];
                 totalImages++;
-                totalBoxes += imageData.boxes?.length || 0;
+                totalBoxes += imageData.boxCount ?? (imageData.boxes?.length || 0);
                 if (imageData.pageUrl) allPageUrls.push(imageData.pageUrl);
-                imageData.boxes?.forEach(box => {
-                    if (box.note) allNotes.push(box.note);
-                });
+                if (typeof imageData.notePreview === 'string' && imageData.notePreview.trim()) {
+                    allNotes.push(imageData.notePreview);
+                } else {
+                    imageData.boxes?.forEach(box => {
+                        if (box.note) allNotes.push(box.note);
+                    });
+                }
             });
             
             // Enhanced search: displayName, workId, site, baseUrl, notes, pageUrls, image src
@@ -103,13 +151,13 @@ export function sortWorks(works, sortBy = 'date', order = 'desc') {
     const sorted = [...works];
     
     sorted.sort((a, b) => {
+        if (sortBy === 'date') {
+            return compareWorks(a, b, order);
+        }
+
         let aVal, bVal;
         
         switch (sortBy) {
-            case 'date':
-                aVal = a.legacy ? 0 : (a.workEntry.metadata?.lastUpdated || 0);
-                bVal = b.legacy ? 0 : (b.workEntry.metadata?.lastUpdated || 0);
-                break;
             case 'site':
                 aVal = a.legacy ? 'other' : (a.workEntry.site || 'other');
                 bVal = b.legacy ? 'other' : (b.workEntry.site || 'other');
@@ -127,10 +175,11 @@ export function sortWorks(works, sortBy = 'date', order = 'desc') {
         }
         
         if (typeof aVal === 'string') {
-            return order === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-        } else {
-            return order === 'asc' ? aVal - bVal : bVal - aVal;
+            const cmp = order === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+            return cmp !== 0 ? cmp : (a.storageKey || '').localeCompare(b.storageKey || '');
         }
+        const diff = order === 'asc' ? aVal - bVal : bVal - aVal;
+        return diff !== 0 ? diff : (a.storageKey || '').localeCompare(b.storageKey || '');
     });
     
     return sorted;

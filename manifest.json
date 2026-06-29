@@ -9,6 +9,10 @@
     "scripting",
     "clipboardWrite"
   ],
+  "host_permissions": [
+    "https://cdn.syndication.twimg.com/*",
+    "https://api.fxtwitter.com/*"
+  ],
   "action": {
     "default_title": "DeepOverlay",
     "default_popup": "popup.html",

@@ -11,7 +11,24 @@ import {
     formatPageUrl,
     getWorkDisplayLabel
 } from '../utils/helpers.js';
-import { saveWorkEntryWithIndex } from '../utils/storage.js';
+import { saveWorkEntryWithIndex, getWorkImgRecord, removeStorageKeys } from '../utils/storage.js';
+
+function sortImageKeys(workEntry, imageKeys, site) {
+    return [...imageKeys].sort((a, b) => {
+        const da = workEntry.images?.[a];
+        const db = workEntry.images?.[b];
+        const ua = da?.pageUrl || a;
+        const ub = db?.pageUrl || b;
+
+        if (site === 'e-hentai') {
+            const na = parseInt(ua.match(/-(\d+)(?:[#?]|$)/)?.[1] || '0', 10);
+            const nb = parseInt(ub.match(/-(\d+)(?:[#?]|$)/)?.[1] || '0', 10);
+            if (na !== nb) return na - nb;
+        }
+
+        return ua.localeCompare(ub, undefined, { numeric: true, sensitivity: 'base' });
+    });
+}
 
 export function createWorkCard(work, onWorkDelete, onUpdate) {
     if (work.legacy) {
@@ -172,7 +189,7 @@ export function createWorkCard(work, onWorkDelete, onUpdate) {
     expanded.className = 'wcm-expanded';
     expanded.hidden = true;
 
-    const imageKeys = Object.keys(workEntry.images || {});
+    const imageKeys = sortImageKeys(workEntry, Object.keys(workEntry.images || {}), site);
 
     const strip = document.createElement('div');
     strip.className = 'wcm-thumb-strip';
@@ -230,9 +247,14 @@ export function createWorkCard(work, onWorkDelete, onUpdate) {
     function onImageDelete(storageKey, imageSelector) {
         const w = window.allDataCache[storageKey];
         if (w && w.images) {
+            const refKey = w.images?.[imageSelector]?.refKey;
             delete w.images[imageSelector];
             w.metadata.lastUpdated = Date.now();
+            const removals = refKey ? [refKey] : [];
             saveWorkEntryWithIndex(storageKey, w).then(() => {
+                if (!removals.length) return;
+                return removeStorageKeys(removals);
+            }).then(() => {
                 window.allDataCache[storageKey] = w;
                 onUpdate();
             });
@@ -264,17 +286,40 @@ export function createWorkCard(work, onWorkDelete, onUpdate) {
             return;
         }
 
-        const card = createImageCard(
-            work.storageKey,
-            imageKey,
-            imageData,
-            entry,
-            onImageDelete,
-            onUpdate,
-            { compact: true }
-        );
-        detailSlot.appendChild(card);
         updateGoPageButton(imageKey);
+
+        if (imageData?.refKey) {
+            const hint = document.createElement('div');
+            hint.className = 'wcm-detail-hint';
+            hint.textContent = 'Loading…';
+            detailSlot.appendChild(hint);
+
+            getWorkImgRecord(imageData.refKey).then((imgRec) => {
+                detailSlot.innerHTML = '';
+                const merged = { ...imageData, ...(imgRec || { boxes: [] }) };
+                const card = createImageCard(
+                    work.storageKey,
+                    imageKey,
+                    merged,
+                    entry,
+                    onImageDelete,
+                    onUpdate,
+                    { compact: true }
+                );
+                detailSlot.appendChild(card);
+            });
+        } else {
+            const card = createImageCard(
+                work.storageKey,
+                imageKey,
+                imageData,
+                entry,
+                onImageDelete,
+                onUpdate,
+                { compact: true }
+            );
+            detailSlot.appendChild(card);
+        }
     }
 
     imageKeys.forEach((imageKey) => {

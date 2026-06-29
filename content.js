@@ -22,6 +22,307 @@
     /** Document-sized layer (#deep-overlay-layer); holds notes; synced with scroll via transform. */
     let root, isEditMode = false;
     let lastUrl = window.location.href.split('?')[0];
+    let toastEl = null;
+    let toastT = null;
+
+    // --- OCR paste helper widget ---
+    const OCR_HELPER_ENABLED_KEY = 'ocr_paste_helper_enabled';
+    const OCR_HELPER_AUTO_COPY_KEY = 'ocr_paste_helper_auto_copy';
+    let ocrHelper = null;
+    let ocrInputT = null;
+
+    function debounce(fn, ms) {
+        let t;
+        return (...args) => {
+            if (t) clearTimeout(t);
+            t = setTimeout(() => fn(...args), ms);
+        };
+    }
+
+    function convertJpVerticalSimple(text) {
+        // v1: reverse line order and join, dropping blanks (matches user example)
+        const lines = String(text || '')
+            .split(/\r?\n/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .reverse();
+        const joined = lines.join('');
+        return joined.replace(/[ \t]+/g, ' ').trim();
+    }
+
+    /** Whitespace / Intl.Segmenter word count for pasted OCR text. */
+    function countPasteWords(text) {
+        const t = String(text || '');
+        if (!t.trim()) return 0;
+        try {
+            if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+                const seg = new Intl.Segmenter(undefined, { granularity: 'word' });
+                let n = 0;
+                for (const { isWordLike } of seg.segment(t)) {
+                    if (isWordLike) n++;
+                }
+                return n;
+            }
+        } catch (_) {
+            /* ignore */
+        }
+        return t.trim().split(/\s+/).filter(Boolean).length;
+    }
+
+    async function copyToClipboard(text) {
+        const t = String(text || '');
+        try {
+            await navigator.clipboard.writeText(t);
+            return true;
+        } catch {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = t;
+                ta.setAttribute('readonly', 'readonly');
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                ta.style.top = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                ta.remove();
+                return !!ok;
+            } catch {
+                return false;
+            }
+        }
+    }
+
+    function syncOcrHelperVisibility() {
+        if (!ocrHelper) return;
+        if (!shell?.classList?.contains('active') || !isEditMode) {
+            ocrHelper.wrapper.style.display = 'none';
+            ocrHelper.showBtn.style.display = 'none';
+            return;
+        }
+        chrome.storage.local.get([OCR_HELPER_ENABLED_KEY], (r) => {
+            const enabled = !!r[OCR_HELPER_ENABLED_KEY];
+            ocrHelper.wrapper.style.display = enabled ? 'flex' : 'none';
+            ocrHelper.showBtn.style.display = enabled ? 'none' : 'inline-flex';
+        });
+    }
+
+    function ensureOcrHelperDom() {
+        if (!shell) return null;
+        if (ocrHelper) return ocrHelper;
+
+        const wrapper = document.createElement('div');
+        wrapper.id = 'deep-ocr-helper';
+        wrapper.className = 'do-ocr-helper';
+
+        const header = document.createElement('div');
+        header.className = 'do-ocr-head';
+
+        const title = document.createElement('div');
+        title.className = 'do-ocr-title';
+        title.textContent = 'OCR Paste Helper';
+
+        const pasteStatsEl = document.createElement('div');
+        pasteStatsEl.className = 'do-ocr-paste-stats';
+        pasteStatsEl.setAttribute('aria-live', 'polite');
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'do-ocr-title-wrap';
+        titleWrap.appendChild(title);
+        titleWrap.appendChild(pasteStatsEl);
+
+        const right = document.createElement('div');
+        right.className = 'do-ocr-actions';
+
+        const autoCopyLabel = document.createElement('label');
+        autoCopyLabel.className = 'do-ocr-toggle';
+        const autoCopyCb = document.createElement('input');
+        autoCopyCb.type = 'checkbox';
+        autoCopyCb.className = 'do-ocr-auto-copy';
+        const autoCopyTxt = document.createElement('span');
+        autoCopyTxt.textContent = 'Auto-copy';
+        autoCopyLabel.appendChild(autoCopyCb);
+        autoCopyLabel.appendChild(autoCopyTxt);
+
+        const hideBtn = document.createElement('button');
+        hideBtn.type = 'button';
+        hideBtn.className = 'do-ocr-btn do-ocr-hide';
+        hideBtn.textContent = 'Hide';
+
+        right.appendChild(autoCopyLabel);
+        right.appendChild(hideBtn);
+
+        header.appendChild(titleWrap);
+        header.appendChild(right);
+
+        const body = document.createElement('div');
+        body.className = 'do-ocr-body';
+
+        const inTa = document.createElement('textarea');
+        inTa.className = 'do-ocr-input deep-ocr-input';
+        inTa.placeholder = 'Paste OCR text here…';
+        inTa.rows = 6;
+
+        const inWrap = document.createElement('div');
+        inWrap.className = 'do-ocr-in-wrap';
+
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'do-ocr-btn do-ocr-clear';
+        clearBtn.textContent = 'Clear';
+
+        const outWrap = document.createElement('div');
+        outWrap.className = 'do-ocr-out-wrap';
+
+        const outTa = document.createElement('textarea');
+        outTa.className = 'do-ocr-output deep-ocr-output';
+        outTa.placeholder = 'Converted text…';
+        outTa.rows = 6;
+        outTa.readOnly = true;
+
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'do-ocr-btn do-ocr-copy';
+        copyBtn.textContent = 'Copy';
+
+        outWrap.appendChild(outTa);
+        outWrap.appendChild(copyBtn);
+
+        function updatePasteStats() {
+            const raw = inTa.value;
+            const words = countPasteWords(raw);
+            const chars = [...raw].length;
+            pasteStatsEl.textContent =
+                words === 1 ? `1 word · ${chars} chars` : `${words} words · ${chars} chars`;
+        }
+
+        inWrap.appendChild(inTa);
+        inWrap.appendChild(clearBtn);
+        body.appendChild(inWrap);
+        body.appendChild(outWrap);
+
+        // Small show button (visible when hidden)
+        const showBtn = document.createElement('button');
+        showBtn.type = 'button';
+        showBtn.id = 'deep-ocr-helper-show';
+        showBtn.className = 'do-ocr-show';
+        showBtn.textContent = 'OCR';
+
+        function setVisible(vis) {
+            chrome.storage.local.set({ [OCR_HELPER_ENABLED_KEY]: !!vis }, () => {
+                syncOcrHelperVisibility();
+            });
+        }
+
+        hideBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setVisible(false);
+        });
+
+        showBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setVisible(true);
+        });
+
+        autoCopyCb.addEventListener('change', (e) => {
+            chrome.storage.local.set({ [OCR_HELPER_AUTO_COPY_KEY]: !!e.target.checked });
+        });
+
+        const updateOut = debounce(async () => {
+            const converted = convertJpVerticalSimple(inTa.value);
+            outTa.value = converted;
+            if (autoCopyCb.checked && converted) {
+                const ok = await copyToClipboard(converted);
+                if (ok) showToast('Copied', 'info');
+                else showToast('Copy failed', 'error');
+            }
+        }, 180);
+
+        clearBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (ocrInputT) clearTimeout(ocrInputT);
+            inTa.value = '';
+            outTa.value = '';
+            updatePasteStats();
+            inTa.focus();
+        });
+
+        inTa.addEventListener('input', () => {
+            updatePasteStats();
+            updateOut();
+        });
+
+        copyBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const ok = await copyToClipboard(outTa.value);
+            if (ok) showToast('Copied', 'info');
+            else showToast('Copy failed', 'error');
+        });
+
+        // Prevent overlay mouse handlers from interfering with typing/clicking
+        wrapper.addEventListener('mousedown', (e) => e.stopPropagation());
+        wrapper.addEventListener('click', (e) => e.stopPropagation());
+
+        wrapper.appendChild(header);
+        wrapper.appendChild(body);
+
+        shell.appendChild(wrapper);
+        shell.appendChild(showBtn);
+
+        updatePasteStats();
+
+        ocrHelper = { wrapper, showBtn, inTa, outTa, autoCopyCb, setVisible };
+        return ocrHelper;
+    }
+
+    function initOcrPasteHelper() {
+        const ui = ensureOcrHelperDom();
+        if (!ui) return;
+        chrome.storage.local.get([OCR_HELPER_ENABLED_KEY, OCR_HELPER_AUTO_COPY_KEY], (r) => {
+            const enabled = !!r[OCR_HELPER_ENABLED_KEY];
+            const autoCopy = !!r[OCR_HELPER_AUTO_COPY_KEY];
+            ui.autoCopyCb.checked = autoCopy;
+            // Persisted preference is stored; actual visibility is gated by edit mode.
+            chrome.storage.local.set({ [OCR_HELPER_ENABLED_KEY]: enabled }, () => {
+                syncOcrHelperVisibility();
+            });
+        });
+    }
+
+    function showToast(message, kind = 'info') {
+        try {
+            if (!shell) return;
+            if (!toastEl) {
+                toastEl = document.createElement('div');
+                toastEl.id = 'deep-overlay-toast';
+                toastEl.style.position = 'fixed';
+                toastEl.style.right = '10px';
+                toastEl.style.bottom = '10px';
+                toastEl.style.zIndex = '2147483647';
+                toastEl.style.pointerEvents = 'none';
+                toastEl.style.maxWidth = '420px';
+                toastEl.style.whiteSpace = 'pre-wrap';
+                toastEl.style.fontFamily = "'Roboto Mono', 'JetBrains Mono', monospace";
+                toastEl.style.fontSize = '12px';
+                toastEl.style.padding = '10px 12px';
+                toastEl.style.borderRadius = '8px';
+                toastEl.style.border = '1px solid rgba(255,255,255,0.12)';
+                toastEl.style.boxShadow = '0 8px 20px rgba(0,0,0,0.35)';
+                toastEl.style.background = 'rgba(30, 31, 34, 0.94)';
+                toastEl.style.color = '#fff';
+                shell.appendChild(toastEl);
+            }
+            toastEl.textContent = message;
+            toastEl.style.display = 'block';
+            toastEl.style.borderColor = kind === 'error' ? 'rgba(224, 90, 90, 0.7)' : 'rgba(255,255,255,0.12)';
+            if (toastT) clearTimeout(toastT);
+            toastT = setTimeout(() => {
+                if (toastEl) toastEl.style.display = 'none';
+            }, kind === 'error' ? 6000 : 2200);
+        } catch {
+            // ignore
+        }
+    }
 
     // Interaction State
     let interactionMode = 'NONE'; // 'DRAW', 'MOVE', 'RESIZE'
@@ -38,6 +339,26 @@
     // Position tracking for dynamic layout changes
     let positionCheckInterval = null;
     let lastPositionCheckTime = 0;
+
+    // loadBoxes can be triggered many times on page load (DOM ready, window load, img load, retries).
+    let loadBoxesGeneration = 0;
+
+    function clearPageOverlays() {
+        if (!root) return;
+        root.querySelectorAll('.deep-box').forEach((b) => b.remove());
+        root.querySelectorAll('.deep-image-overlay').forEach((overlay) => overlay.remove());
+        selectedImages.forEach((containerData, img) => {
+            if (containerData.resizeObserver) {
+                containerData.resizeObserver.disconnect();
+            }
+            img.classList.remove('deep-image-selected', 'deep-image-hover');
+        });
+        selectedImages.clear();
+        imageResizeObservers.clear();
+        stopPositionMonitoring();
+    }
+
+    const scheduleLoadBoxes = debounce(() => loadBoxes(0), 80);
 
     // --- Init ---
     function init() {
@@ -64,6 +385,9 @@
         
         // Image selection mode setup
         setupImageSelection();
+
+        // OCR paste helper overlay widget (optional)
+        initOcrPasteHelper();
 
         // --- Event Listeners ---
 
@@ -104,7 +428,7 @@
         window.addEventListener('keydown', (e) => {
             if (isEditMode && shell.classList.contains('active')) {
                 // Allow typing ONLY in our own notes
-                if (e.target.classList.contains('deep-note-input')) {
+                if (e.target.classList.contains('deep-note-input') || e.target.classList.contains('deep-ocr-input') || e.target.classList.contains('deep-ocr-output')) {
                     // Let it pass to the textarea (don't preventDefault)
                     // But we rely on the textarea's own listener to stop bubbling
                     return;
@@ -142,30 +466,20 @@
         
         // 5.5. Page Load Events - Reload boxes after page/images are fully loaded
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
-                // Wait a bit for images to start loading
-                setTimeout(() => loadBoxes(), 100);
-            });
+            document.addEventListener('DOMContentLoaded', () => scheduleLoadBoxes());
         } else {
-            // DOM already loaded, but images might still be loading
-            setTimeout(() => loadBoxes(), 100);
+            scheduleLoadBoxes();
         }
-        
-        // Also reload boxes when window fully loads (including images)
-        window.addEventListener('load', () => {
-            setTimeout(() => loadBoxes(), 200);
-        });
+
+        window.addEventListener('load', () => scheduleLoadBoxes());
 
         // Some sites (e.g. e-hentai next/prev) swap/replace the main <img> after URL change.
         // If we load before the new image finishes loading, our retry loop can miss it.
-        // Listen for image load events and re-run loadBoxes (debounced) to attach overlays reliably.
-        let imgLoadReloadT = null;
         document.addEventListener('load', (e) => {
             const t = e.target;
             if (!t || t.tagName !== 'IMG') return;
             if (!shell?.classList?.contains('active')) return;
-            if (imgLoadReloadT) clearTimeout(imgLoadReloadT);
-            imgLoadReloadT = setTimeout(() => loadBoxes(), 80);
+            scheduleLoadBoxes();
         }, true);
 
         // 6. Messages
@@ -934,11 +1248,39 @@
                 }
             });
             
-            // Update work entry with image data — key by page URL + CSS selector so
-            // multi-page galleries (e.g. e-h) do not overwrite the same selector on another page.
+            // Update work entry with image data.
+            // Store heavy boxes (with long OCR notes) in separate workimg:* keys to avoid
+            // Chrome storage per-item size limits.
+            const workImgUpdates = {};
+            const workImgRemovals = [];
+
             imageBoxes.forEach((imageData, cssSelector) => {
-                const storageImageKey = adapters().makeImageStorageKey(pageUrl, cssSelector);
-                workEntry.images[storageImageKey] = imageData;
+                const imageKey = adapters().makeImageStorageKey(pageUrl, cssSelector);
+                const refKey = adapters().makeWorkImgKey(storageKey, imageKey);
+
+                // Save full image record separately
+                workImgUpdates[refKey] = {
+                    pageUrl: imageData.pageUrl,
+                    selector: cssSelector,
+                    src: imageData.src || '',
+                    boxes: imageData.boxes || []
+                };
+
+                // Keep only lightweight ref in work entry
+                const allNotes = (imageData.boxes || [])
+                    .map((b) => (b.note || '').trim())
+                    .filter(Boolean)
+                    .join('\n');
+                const notePreview = allNotes.length > 180 ? `${allNotes.slice(0, 180)}…` : allNotes;
+
+                workEntry.images[imageKey] = {
+                    refKey,
+                    pageUrl: imageData.pageUrl,
+                    selector: cssSelector,
+                    src: imageData.src || '',
+                    boxCount: (imageData.boxes || []).length,
+                    notePreview
+                };
             });
 
             // Drop legacy keys (selector-only) for this page when we saved composite keys above
@@ -950,28 +1292,48 @@
                 if (!imageBoxes.has(p.cssSelector)) return;
                 delete workEntry.images[k];
             });
+
+            // Remove any existing workimg:* records for this page that no longer have a matching imageKey
+            Object.keys(workEntry.images).forEach((k) => {
+                const imgMeta = workEntry.images[k];
+                if (!imgMeta || typeof imgMeta !== 'object') return;
+                if (imgMeta.pageUrl !== pageUrl) return;
+                if (!imgMeta.refKey) return;
+                // If this refKey wasn't updated in this save, keep it (image might not be selected today).
+                // We only remove refs when the imageKey itself is missing from the current page selection.
+            });
             
             // Save to storage + _index
             const index = Array.isArray(result[INDEX_KEY]) ? [...result[INDEX_KEY]] : [];
             adapters().upsertIndexEntry(index, storageKey, workEntry);
-            const data = { [storageKey]: workEntry, [INDEX_KEY]: index };
-            chrome.storage.local.set(data);
+            const data = { [storageKey]: workEntry, [INDEX_KEY]: index, ...workImgUpdates };
+            chrome.storage.local.set(data, () => {
+                const err = chrome.runtime.lastError;
+                if (err) {
+                    console.error('DeepOverlay: save failed', err);
+                    showToast(`Save failed: ${err.message || err}`, 'error');
+                }
+            });
         });
     }
 
     function loadBoxes(retryCount = 0) {
         if (!chrome.runtime?.id) return;
+
+        const generation = ++loadBoxesGeneration;
+        clearPageOverlays();
         
         const currentUrl = window.location.href;
         const storageKey = adapters().getStorageKey(currentUrl);
         const pageUrl = getCurrentPageUrl();
         
         chrome.storage.local.get([storageKey], (result) => {
+            if (generation !== loadBoxesGeneration) return;
             if (chrome.runtime.lastError) return;
             
             const workEntry = result[storageKey];
             if (!workEntry) {
-                loadLegacyBoxes();
+                loadLegacyBoxes(generation);
                 return;
             }
             if (workEntry.legacyFlatBoxes && Array.isArray(workEntry.legacyFlatBoxes)) {
@@ -980,7 +1342,7 @@
                 return;
             }
             if (!workEntry.images) {
-                loadLegacyBoxes();
+                loadLegacyBoxes(generation);
                 return;
             }
             
@@ -988,14 +1350,16 @@
             const missingSelectors = [];
             
             // Filter images by pageUrl - only load boxes for current page
+            const toLoad = [];
             Object.keys(workEntry.images).forEach(imageKey => {
-                const imageData = workEntry.images[imageKey];
+                const imageMeta = workEntry.images[imageKey];
                 
                 // Only load if this image is on the current page
-                if (imageData.pageUrl !== pageUrl) return;
+                if (imageMeta.pageUrl !== pageUrl) return;
 
                 const parsed = adapters().parseImageStorageKey(imageKey);
                 const cssSelector = parsed.cssSelector;
+                const refKey = imageMeta.refKey;
                 
                 // Try to find the image in the DOM
                 let img;
@@ -1012,68 +1376,78 @@
                 }
                 
                 loadedAny = true;
+                toLoad.push({ imageKey, cssSelector, refKey, img });
                 
-                // Select the image and create overlay container
-                if (!selectedImages.has(img)) {
-                    img.classList.add('deep-image-selected');
-                    const containerData = createImageOverlayContainer(img);
-                    selectedImages.set(img, containerData);
+            });
+
+            const refKeys = toLoad.map((x) => x.refKey).filter(Boolean);
+            chrome.storage.local.get(refKeys, (imgRes) => {
+                if (generation !== loadBoxesGeneration) return;
+                toLoad.forEach(({ refKey, cssSelector, img }) => {
+                    const imageData = refKey ? imgRes[refKey] : null;
+                    const boxes = imageData?.boxes || [];
+
+                    // Select the image and create overlay container
+                    if (!selectedImages.has(img)) {
+                        img.classList.add('deep-image-selected');
+                        const containerData = createImageOverlayContainer(img);
+                        selectedImages.set(img, containerData);
+                    }
+
+                    const overlayContainer = selectedImages.get(img).overlayContainer;
+
+                    boxes.forEach((boxData) => {
+                        const box = document.createElement('div');
+                        box.className = 'deep-box';
+                        box.dataset.note = boxData.note || "";
+                        box.dataset.imageSelector = cssSelector;
+                        box.dataset.imageSrc = boxData.imageSrc || imageData?.src || "";
+                        
+                        // Store percentage values
+                        box.dataset.percentLeft = boxData.percentLeft;
+                        box.dataset.percentTop = boxData.percentTop;
+                        box.dataset.percentWidth = boxData.percentWidth;
+                        box.dataset.percentHeight = boxData.percentHeight;
+                        
+                        // Calculate initial pixel positions from percentages
+                        const imgRect = img.getBoundingClientRect();
+                        box.style.left = (imgRect.width * boxData.percentLeft) + 'px';
+                        box.style.top = (imgRect.height * boxData.percentTop) + 'px';
+                        box.style.width = (imgRect.width * boxData.percentWidth) + 'px';
+                        box.style.height = (imgRect.height * boxData.percentHeight) + 'px';
+                        
+                        setupBoxEvents(box);
+                        applyVisualSettingsToBox(box);
+                        
+                        // Add resize handle
+                        if (!box.querySelector('.deep-resize-handle')) {
+                            const handle = document.createElement('div');
+                            handle.className = 'deep-resize-handle';
+                            box.appendChild(handle);
+                        }
+                        
+                        overlayContainer.appendChild(box);
+                    });
+                });
+
+                // If some images weren't found and we haven't retried too many times, retry
+                if (missingSelectors.length > 0 && retryCount < 30) {
+                    const delay = Math.min(120 * Math.pow(1.45, retryCount), 3000);
+                    setTimeout(() => {
+                        loadBoxes(retryCount + 1);
+                    }, delay);
                 }
                 
-                const overlayContainer = selectedImages.get(img).overlayContainer;
+                // Initial position update
+                if (loadedAny) {
+                    updateBoxPositions();
+                    applyVisualSettings();
+                }
                 
-                // Load boxes for this image
-                imageData.boxes.forEach(boxData => {
-                    const box = document.createElement('div');
-                    box.className = 'deep-box';
-                    box.dataset.note = boxData.note || "";
-                    box.dataset.imageSelector = cssSelector;
-                    box.dataset.imageSrc = boxData.imageSrc || imageData.src || "";
-                    
-                    // Store percentage values
-                    box.dataset.percentLeft = boxData.percentLeft;
-                    box.dataset.percentTop = boxData.percentTop;
-                    box.dataset.percentWidth = boxData.percentWidth;
-                    box.dataset.percentHeight = boxData.percentHeight;
-                    
-                    // Calculate initial pixel positions from percentages
-                    const imgRect = img.getBoundingClientRect();
-                    box.style.left = (imgRect.width * boxData.percentLeft) + 'px';
-                    box.style.top = (imgRect.height * boxData.percentTop) + 'px';
-                    box.style.width = (imgRect.width * boxData.percentWidth) + 'px';
-                    box.style.height = (imgRect.height * boxData.percentHeight) + 'px';
-                    
-                    setupBoxEvents(box);
-                    applyVisualSettingsToBox(box);
-                    
-                    // Add resize handle
-                    if (!box.querySelector('.deep-resize-handle')) {
-                        const handle = document.createElement('div');
-                        handle.className = 'deep-resize-handle';
-                        box.appendChild(handle);
-                    }
-                    
-                    overlayContainer.appendChild(box);
-                });
+                // Always update UI to reflect current state (even if no images loaded)
+                updateImageSelectionUI();
             });
             
-            // If some images weren't found and we haven't retried too many times, retry
-            if (missingSelectors.length > 0 && retryCount < 30) {
-                // Retry after a delay, with exponential backoff
-                const delay = Math.min(120 * Math.pow(1.45, retryCount), 3000);
-                setTimeout(() => {
-                    loadBoxes(retryCount + 1);
-                }, delay);
-            }
-            
-            // Initial position update
-            if (loadedAny) {
-                updateBoxPositions();
-                applyVisualSettings();
-            }
-            
-            // Always update UI to reflect current state (even if no images loaded)
-            updateImageSelectionUI();
         });
     }
     
@@ -1104,10 +1478,11 @@
         applyVisualSettings();
     }
 
-    function loadLegacyBoxes() {
+    function loadLegacyBoxes(generation) {
         // Fallback: raw URL key with array of boxes (pre–work-entry migration)
         const url = getUrl();
         chrome.storage.local.get([url], (result) => {
+            if (generation !== loadBoxesGeneration) return;
             if (chrome.runtime.lastError) return;
             const boxes = result[url] || [];
             boxes.forEach((d) => appendLegacyBoxData(d));
@@ -1134,25 +1509,7 @@
         const url = getUrl();
         if (url !== lastUrl) {
             lastUrl = url;
-            
-            // Clear all boxes and image overlays
-            document.querySelectorAll('.deep-box').forEach(b => b.remove());
-            document.querySelectorAll('.deep-image-overlay').forEach(overlay => overlay.remove());
-            
-            // Deselect all images and clean up observers
-            selectedImages.forEach((containerData, img) => {
-                if (containerData.resizeObserver) {
-                    containerData.resizeObserver.disconnect();
-                }
-                img.classList.remove('deep-image-selected', 'deep-image-hover');
-            });
-            selectedImages.clear();
-            imageResizeObservers.clear();
-            
-            // Update UI to reflect cleared selection
             updateImageSelectionUI();
-            
-            // Load boxes for new page
             loadBoxes();
         }
     }
@@ -1174,6 +1531,7 @@
         if (shell.classList.contains('active')) {
             updateBoxPositions();
             setEditMode(false);
+            syncOcrHelperVisibility();
         }
     }
 
@@ -1566,6 +1924,7 @@
         } else {
             disableImageSelectionMode();
         }
+        syncOcrHelperVisibility();
     };
 
     function maybeStart() {

@@ -1,7 +1,7 @@
 // Main rendering orchestration
 
 import { createWorkCard } from '../components/WorkCard.js';
-import { filterAndGroupData, sortWorks, filterWorks } from './filters.js';
+import { filterAndGroupData, orderWorksForDashboard, filterWorks } from './filters.js';
 
 export const LIBRARY_PAGE_SIZE = 12;
 
@@ -66,7 +66,7 @@ export function renderDashboard(allData, query = '', listContainer, onWorkDelete
     Object.keys(worksByDomain).forEach((domain) => {
         allWorks.push(...worksByDomain[domain]);
     });
-    const sortedWorks = sortWorks(allWorks, 'date', 'desc');
+    const sortedWorks = orderWorksForDashboard(allData, allWorks);
     const filteredWorks = filterWorks(sortedWorks, { site: siteFilter });
     const totalWorks = filteredWorks.length;
 

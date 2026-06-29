@@ -37,6 +37,30 @@ export function removeStorageKeys(keys) {
     });
 }
 
+export function getStorageData(keys) {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(keys, (items) => {
+            resolve(items || {});
+        });
+    });
+}
+
+export function getWorkImgRecord(refKey) {
+    return new Promise((resolve) => {
+        if (!refKey) return resolve(null);
+        chrome.storage.local.get([refKey], (r) => {
+            resolve(r ? r[refKey] : null);
+        });
+    });
+}
+
+export function saveWorkImgRecord(refKey, record) {
+    return new Promise((resolve) => {
+        if (!refKey) return resolve();
+        chrome.storage.local.set({ [refKey]: record }, () => resolve());
+    });
+}
+
 export function setStorageData(data) {
     return new Promise((resolve) => {
         chrome.storage.local.set(data, () => {
@@ -65,6 +89,33 @@ export function clearAllStorage() {
 
 export function updateBoxNoteInStorage(storageKey, imageSelector, boxIndex, newText, allData) {
     const workEntry = allData[storageKey];
+    const meta = workEntry?.images?.[imageSelector];
+    const refKey = meta?.refKey;
+
+    // New split-storage format: boxes live under workimg:* refKey
+    if (refKey) {
+        return getWorkImgRecord(refKey).then((imgRec) => {
+            if (!imgRec?.boxes?.[boxIndex]) return;
+            imgRec.boxes[boxIndex].note = newText;
+            return saveWorkImgRecord(refKey, imgRec).then(() => {
+                const notes = (imgRec.boxes || [])
+                    .map((b) => (b.note || '').trim())
+                    .filter(Boolean)
+                    .join('\n');
+                const notePreview = notes.length > 180 ? `${notes.slice(0, 180)}…` : notes;
+
+                meta.boxCount = imgRec.boxes?.length || 0;
+                meta.notePreview = notePreview;
+                workEntry.metadata.lastUpdated = Date.now();
+
+                return saveWorkEntryWithIndex(storageKey, workEntry).then(() => {
+                    allData[storageKey] = workEntry;
+                });
+            });
+        });
+    }
+
+    // Old format (fallback)
     if (workEntry && workEntry.images && workEntry.images[imageSelector]) {
         const imageData = workEntry.images[imageSelector];
         if (imageData.boxes && imageData.boxes[boxIndex]) {

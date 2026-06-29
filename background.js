@@ -3,6 +3,75 @@ import {
   SCHEMA_VERSION_KEY,
   CURRENT_SCHEMA_VERSION,
 } from './lib/site-adapters.mjs';
+import { resolveTweetMedia } from './lib/tweet-syndication.mjs';
+import {
+  getThumbsMap,
+  getThumbsNeedingResolve,
+  putThumbsBatch,
+} from './lib/likes-db.mjs';
+
+const RESOLVE_CONCURRENCY = 3;
+const RESOLVE_DELAY_MS = 200;
+
+/** @type {Array<{ tweetId: string; resolve: (v: unknown) => void }>} */
+const resolveQueue = [];
+let resolveActive = 0;
+
+function delay(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function pumpResolveQueue() {
+  while (resolveActive < RESOLVE_CONCURRENCY && resolveQueue.length > 0) {
+    const job = resolveQueue.shift();
+    if (!job) break;
+    resolveActive += 1;
+    (async () => {
+      try {
+        await delay(RESOLVE_DELAY_MS);
+        const result = await resolveTweetMedia(job.tweetId);
+        job.resolve(result);
+      } catch {
+        job.resolve(null);
+      } finally {
+        resolveActive -= 1;
+        pumpResolveQueue();
+      }
+    })();
+  }
+}
+
+function enqueueResolve(tweetId) {
+  return new Promise((resolve) => {
+    resolveQueue.push({ tweetId, resolve });
+    pumpResolveQueue();
+  });
+}
+
+async function resolveTweetMediaBatch(tweetIds) {
+  const unique = [...new Set((tweetIds || []).map(String).filter(Boolean))];
+  if (unique.length === 0) return {};
+
+  const toFetch = await getThumbsNeedingResolve(unique);
+  const updates = {};
+
+  await Promise.all(
+    toFetch.map(async (id) => {
+      const media = await enqueueResolve(id);
+      if (media) {
+        updates[id] = { ...media, resolvedAt: Date.now() };
+      } else {
+        updates[id] = { mediaType: 'none', resolvedAt: Date.now() };
+      }
+    })
+  );
+
+  if (Object.keys(updates).length > 0) {
+    await putThumbsBatch(updates);
+  }
+
+  return getThumbsMap(unique);
+}
 
 function runStorageMigration() {
   chrome.storage.local.get([SCHEMA_VERSION_KEY], (r) => {
@@ -48,6 +117,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     });
     return true; // Keep channel open for async response
+  }
+  if (request.action === "RESOLVE_TWEET_MEDIA") {
+    resolveTweetMediaBatch(request.tweetIds || [])
+      .then((cache) => sendResponse({ cache }))
+      .catch(() => sendResponse({ cache: {} }));
+    return true;
   }
 });
 

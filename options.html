@@ -43,6 +43,11 @@
           Library
           <span class="do-nav-count" id="library-nav-count">0</span>
         </button>
+        <button type="button" class="do-nav-item" data-panel="likes" id="nav-likes">
+          <span class="do-nav-icon" aria-hidden="true">♡</span>
+          Likes
+          <span class="do-nav-count" id="likes-nav-count">0</span>
+        </button>
         <button type="button" class="do-nav-item" data-panel="settings" id="nav-settings">
           <span class="do-nav-icon" aria-hidden="true">⚙</span>
           Settings
@@ -73,6 +78,42 @@
             <div class="empty-state">Loading…</div>
           </div>
           <div id="library-pagination" class="do-pagination" hidden aria-label="Pagination"></div>
+        </div>
+      </section>
+
+      <section class="do-panel" id="panel-likes" role="tabpanel" aria-labelledby="nav-likes">
+        <div class="do-panel-head">
+          <span class="do-panel-title">Likes</span>
+          <span class="do-panel-hint">— X archive gallery</span>
+        </div>
+        <div class="do-panel-body" id="likes-panel-body">
+          <div class="do-likes-import-bar" id="likes-import-bar">
+            <input type="file" id="likes-file-input" accept=".js,text/javascript,application/javascript" hidden>
+            <button type="button" class="do-btn do-btn-accent" id="likes-import-btn">↑ Import like.js</button>
+            <button type="button" class="do-btn" id="likes-import-bundled-btn">Use extension data/like.js</button>
+            <button type="button" class="do-btn" id="likes-reimport-btn" hidden>Re-import file</button>
+            <label class="do-likes-merge-toggle" id="likes-merge-wrap" hidden>
+              <input type="checkbox" id="likes-reimport-merge">
+              Merge with existing
+            </label>
+          </div>
+          <div class="do-likes-toolbar">
+            <label class="do-sr-only" for="likes-search-input">Search likes</label>
+            <input class="do-search do-search-grow" type="search" id="likes-search-input" placeholder="/ search captions, tweet ids…" autocomplete="off">
+            <label class="do-likes-media-toggle">
+              <input type="checkbox" id="likes-media-only">
+              Media only
+            </label>
+          </div>
+          <div class="do-likes-meta">
+            <span id="likes-status">Open this tab to load likes.</span>
+            <span id="likes-progress" class="do-likes-progress"></span>
+          </div>
+          <div id="likes-grid" class="do-likes-grid">
+            <div class="empty-state">Loading…</div>
+          </div>
+          <div id="likes-pagination" class="do-pagination" hidden aria-label="Likes pagination"></div>
+          <div id="likes-lightbox" aria-hidden="true"></div>
         </div>
       </section>
 

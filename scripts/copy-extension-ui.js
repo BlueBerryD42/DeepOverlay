@@ -39,3 +39,27 @@ for (const f of fs.readdirSync(dist)) {
 }
 
 flattenHtml('src/options/options.html', 'options.html');
+
+const likeDest = path.join(root, 'data', 'like.js');
+const likeSources = [
+  path.join(root, 'data', 'like.js'),
+  path.join(root, 'src', 'data', 'like.js'),
+];
+let likeCopied = false;
+for (const src of likeSources) {
+  if (!fs.existsSync(src)) continue;
+  if (path.resolve(src) === path.resolve(likeDest)) {
+    likeCopied = true;
+    break;
+  }
+  fs.mkdirSync(path.dirname(likeDest), { recursive: true });
+  fs.copyFileSync(src, likeDest);
+  console.log('Copied', path.relative(root, src), '→ data/like.js');
+  likeCopied = true;
+  break;
+}
+if (!likeCopied && !fs.existsSync(likeDest)) {
+  console.warn('Missing data/like.js — add your X archive like.js to data/like.js');
+} else if (fs.existsSync(likeDest)) {
+  console.log('data/like.js present');
+}

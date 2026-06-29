@@ -5,6 +5,7 @@ import { getAllData, getStorageBytes, removeStorageKey, clearAllStorage } from '
 import { formatBytes } from './utils/helpers.js';
 import { createBulkActionsBar, updateBulkActionsBar } from './components/BulkActions.js';
 import { filterAndGroupData } from './utils/filters.js';
+import { initLikesPanel } from './likesPanel.js';
 
 const listContainer = document.getElementById('dashboard-list');
 const searchInput = document.getElementById('search-input');
@@ -28,7 +29,7 @@ function countWorks(data) {
     return n;
 }
 
-function initNav() {
+function initNav(onPanelShow) {
     const items = document.querySelectorAll('.do-nav-item[data-panel]');
     const panels = document.querySelectorAll('.do-panel');
 
@@ -42,6 +43,7 @@ function initNav() {
             const on = p.id === `panel-${panelId}`;
             p.classList.toggle('active', on);
         });
+        onPanelShow?.(panelId);
     }
 
     items.forEach((btn) => {
@@ -64,7 +66,10 @@ function syncManifestVersion() {
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
     syncManifestVersion();
-    initNav();
+    const showLikesPanel = initLikesPanel();
+    initNav((panelId) => {
+        if (panelId === 'likes') showLikesPanel?.();
+    });
     loadDashboard();
     initTheme();
     initBulkActions();

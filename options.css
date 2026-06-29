@@ -1643,4 +1643,223 @@ button.danger:hover {
     justify-content: space-between;
   }
 }
+/* --- X Likes Gallery --- */
+.do-likes-import-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--do-border, var(--border-light));
+}
+.do-likes-merge-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--do-muted, var(--text-secondary));
+  cursor: pointer;
+}
+.do-likes-merge-toggle input {
+  accent-color: var(--do-accent, var(--accent-color));
+}
+.do-like-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+.do-like-action-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+.do-like-action-btn--danger {
+  color: var(--danger-color);
+}
+.do-likes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.do-likes-media-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--do-muted, var(--text-secondary));
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.do-likes-media-toggle input {
+  accent-color: var(--do-accent, var(--accent-color));
+}
+.do-likes-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--do-muted, var(--text-secondary));
+}
+.do-likes-progress {
+  color: var(--do-hint, var(--text-secondary));
+}
+.do-likes-grid {
+  column-count: 4;
+  column-gap: 12px;
+}
+@media (max-width: 1200px) {
+  .do-likes-grid {
+    column-count: 3;
+  }
+}
+@media (max-width: 900px) {
+  .do-likes-grid {
+    column-count: 2;
+  }
+}
+@media (max-width: 520px) {
+  .do-likes-grid {
+    column-count: 1;
+  }
+}
+.do-like-card {
+  break-inside: avoid;
+  margin-bottom: 12px;
+  background: var(--do-raised, var(--card-content-bg));
+  border: 1px solid var(--do-border, var(--border-light));
+  border-radius: var(--do-radius, 6px);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.do-like-card:hover {
+  border-color: var(--do-border-md, var(--border-color));
+}
+.do-like-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  background: var(--do-surface, var(--card-bg));
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.do-like-thumb--placeholder {
+  background: linear-gradient(135deg, var(--do-raised, #1d1f22) 0%, var(--do-surface, #161719) 100%);
+}
+.do-like-placeholder-icon {
+  font-size: 28px;
+  opacity: 0.35;
+}
+.do-like-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.do-like-badge {
+  position: absolute;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  pointer-events: none;
+}
+.do-like-badge--media {
+  bottom: 8px;
+  left: 8px;
+}
+.do-like-badge--count {
+  top: 8px;
+  right: 8px;
+}
+.do-like-caption {
+  margin: 0;
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--do-text, var(--text-primary));
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.do-like-link {
+  display: inline-block;
+  padding: 0 10px 10px;
+  font-size: 10px;
+  color: var(--do-accent, var(--accent-color));
+  text-decoration: none;
+}
+.do-like-link:hover {
+  text-decoration: underline;
+}
+.do-likes-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.do-likes-lightbox[hidden] {
+  display: none !important;
+}
+body.do-likes-lightbox-open {
+  overflow: hidden;
+}
+.do-likes-lightbox-img {
+  max-width: min(92vw, 1200px);
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: 4px;
+}
+.do-likes-lightbox-close,
+.do-likes-lightbox-prev,
+.do-likes-lightbox-next {
+  position: absolute;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 24px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.do-likes-lightbox-close {
+  top: 16px;
+  right: 16px;
+  font-size: 18px;
+}
+.do-likes-lightbox-prev {
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.do-likes-lightbox-next {
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.do-likes-lightbox-counter {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 13px;
+}
 
