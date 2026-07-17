@@ -1,164 +1,175 @@
-// Chrome storage operations
+// Overlay + settings storage (works in IndexedDB; settings in chrome.storage)
 
-import { INDEX_KEY, removeIndexKey, upsertIndexRow } from './storageMeta.js';
+import { INDEX_KEY } from './storageMeta.js';
+import {
+  ensureOverlayMigrated,
+  getWorksSnapshot,
+  getWorkImage,
+  saveWorkImage,
+  saveWorkWithIndex,
+  deleteWork,
+  deleteWorkImages,
+  clearOverlayData,
+  estimateOverlayBytes,
+} from '../../../lib/overlay-db.mjs';
 
-export function getAllData() {
-    return new Promise((resolve) => {
-        chrome.storage.local.get(null, (items) => {
-            resolve(items);
-        });
-    });
+export async function getAllData() {
+  await ensureOverlayMigrated();
+  const overlay = await getWorksSnapshot();
+  const settings = await new Promise((resolve) => {
+    chrome.storage.local.get(null, (items) => resolve(items || {}));
+  });
+  const merged = { ...settings };
+  for (const [k, v] of Object.entries(overlay)) {
+    merged[k] = v;
+  }
+  return merged;
 }
 
-export function getStorageBytes() {
-    return new Promise((resolve) => {
-        chrome.storage.local.getBytesInUse(null, (bytes) => {
-            resolve(bytes);
-        });
-    });
+export async function getStorageBytes() {
+  const [chromeBytes, overlayBytes] = await Promise.all([
+    new Promise((resolve) => {
+      chrome.storage.local.getBytesInUse(null, (bytes) => resolve(bytes || 0));
+    }),
+    estimateOverlayBytes(),
+  ]);
+  return chromeBytes + overlayBytes;
 }
 
-export function removeStorageKey(key) {
-    return new Promise((resolve) => {
-        chrome.storage.local.get([INDEX_KEY], (r) => {
-            const index = removeIndexKey(r[INDEX_KEY], key);
-            chrome.storage.local.remove([key], () => {
-                chrome.storage.local.set({ [INDEX_KEY]: index }, () => resolve());
-            });
-        });
-    });
+export async function removeStorageKey(key) {
+  if (key.startsWith('work:')) {
+    await deleteWork(key);
+    return;
+  }
+  return new Promise((resolve) => {
+    chrome.storage.local.remove([key], () => resolve());
+  });
 }
 
 export function removeStorageKeys(keys) {
-    return new Promise((resolve) => {
-        chrome.storage.local.remove(keys, () => {
-            resolve();
-        });
-    });
+  const workKeys = keys.filter((k) => k.startsWith('work:'));
+  const imgKeys = keys.filter((k) => k.startsWith('workimg:'));
+  const other = keys.filter((k) => !k.startsWith('work:') && !k.startsWith('workimg:'));
+
+  const tasks = [];
+  if (imgKeys.length) tasks.push(deleteWorkImages(imgKeys));
+  if (workKeys.length) tasks.push(Promise.all(workKeys.map((k) => deleteWork(k))));
+  if (other.length) {
+    tasks.push(
+      new Promise((resolve) => {
+        chrome.storage.local.remove(other, () => resolve());
+      })
+    );
+  }
+  return Promise.all(tasks);
 }
 
 export function getStorageData(keys) {
-    return new Promise((resolve) => {
-        chrome.storage.local.get(keys, (items) => {
-            resolve(items || {});
-        });
-    });
+  return getAllData().then((all) => {
+    const out = {};
+    for (const k of keys) {
+      if (all[k] !== undefined) out[k] = all[k];
+    }
+    return out;
+  });
 }
 
 export function getWorkImgRecord(refKey) {
-    return new Promise((resolve) => {
-        if (!refKey) return resolve(null);
-        chrome.storage.local.get([refKey], (r) => {
-            resolve(r ? r[refKey] : null);
-        });
-    });
+  if (!refKey) return Promise.resolve(null);
+  return getWorkImage(refKey);
 }
 
 export function saveWorkImgRecord(refKey, record) {
-    return new Promise((resolve) => {
-        if (!refKey) return resolve();
-        chrome.storage.local.set({ [refKey]: record }, () => resolve());
-    });
+  if (!refKey) return Promise.resolve();
+  return saveWorkImage(refKey, record);
 }
 
 export function setStorageData(data) {
-    return new Promise((resolve) => {
-        chrome.storage.local.set(data, () => {
-            resolve();
-        });
-    });
+  const overlay = {};
+  const chrome = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (k.startsWith('work:') || k === INDEX_KEY) overlay[k] = v;
+    else chrome[k] = v;
+  }
+  const tasks = [];
+  if (Object.keys(chrome).length) {
+    tasks.push(
+      new Promise((resolve) => {
+        chrome.storage.local.set(chrome, () => resolve());
+      })
+    );
+  }
+  for (const [k, v] of Object.entries(overlay)) {
+    if (k.startsWith('work:')) tasks.push(saveWorkWithIndex(k, v));
+  }
+  return Promise.all(tasks);
 }
 
-/** Persists a work entry and keeps `_index` in sync (dashboard edits). */
 export function saveWorkEntryWithIndex(storageKey, workEntry) {
-    return new Promise((resolve) => {
-        chrome.storage.local.get([INDEX_KEY], (r) => {
-            const index = upsertIndexRow(r[INDEX_KEY], storageKey, workEntry);
-            chrome.storage.local.set({ [storageKey]: workEntry, [INDEX_KEY]: index }, () => resolve());
-        });
-    });
+  return saveWorkWithIndex(storageKey, workEntry);
 }
 
-export function clearAllStorage() {
-    return new Promise((resolve) => {
-        chrome.storage.local.clear(() => {
-            resolve();
-        });
-    });
+export async function clearAllStorage() {
+  await clearOverlayData();
+  return new Promise((resolve) => {
+    chrome.storage.local.clear(() => resolve());
+  });
 }
 
 export function updateBoxNoteInStorage(storageKey, imageSelector, boxIndex, newText, allData) {
-    const workEntry = allData[storageKey];
-    const meta = workEntry?.images?.[imageSelector];
-    const refKey = meta?.refKey;
+  const workEntry = allData[storageKey];
+  const meta = workEntry?.images?.[imageSelector];
+  const refKey = meta?.refKey;
 
-    // New split-storage format: boxes live under workimg:* refKey
-    if (refKey) {
-        return getWorkImgRecord(refKey).then((imgRec) => {
-            if (!imgRec?.boxes?.[boxIndex]) return;
-            imgRec.boxes[boxIndex].note = newText;
-            return saveWorkImgRecord(refKey, imgRec).then(() => {
-                const notes = (imgRec.boxes || [])
-                    .map((b) => (b.note || '').trim())
-                    .filter(Boolean)
-                    .join('\n');
-                const notePreview = notes.length > 180 ? `${notes.slice(0, 180)}…` : notes;
+  if (refKey) {
+    return getWorkImgRecord(refKey).then((imgRec) => {
+      if (!imgRec?.boxes?.[boxIndex]) return;
+      imgRec.boxes[boxIndex].note = newText;
+      return saveWorkImgRecord(refKey, imgRec).then(() => {
+        const notes = (imgRec.boxes || [])
+          .map((b) => (b.note || '').trim())
+          .filter(Boolean)
+          .join('\n');
+        const notePreview = notes.length > 180 ? `${notes.slice(0, 180)}…` : notes;
 
-                meta.boxCount = imgRec.boxes?.length || 0;
-                meta.notePreview = notePreview;
-                workEntry.metadata.lastUpdated = Date.now();
+        meta.boxCount = imgRec.boxes?.length || 0;
+        meta.notePreview = notePreview;
+        workEntry.metadata.lastUpdated = Date.now();
 
-                return saveWorkEntryWithIndex(storageKey, workEntry).then(() => {
-                    allData[storageKey] = workEntry;
-                });
-            });
+        return saveWorkEntryWithIndex(storageKey, workEntry).then(() => {
+          allData[storageKey] = workEntry;
         });
-    }
+      });
+    });
+  }
 
-    // Old format (fallback)
-    if (workEntry && workEntry.images && workEntry.images[imageSelector]) {
-        const imageData = workEntry.images[imageSelector];
-        if (imageData.boxes && imageData.boxes[boxIndex]) {
-            imageData.boxes[boxIndex].note = newText;
-            workEntry.metadata.lastUpdated = Date.now();
-            const update = {};
-            update[storageKey] = workEntry;
-            return new Promise((resolve) => {
-                chrome.storage.local.get([INDEX_KEY], (r) => {
-                    const index = upsertIndexRow(r[INDEX_KEY], storageKey, workEntry);
-                    update[INDEX_KEY] = index;
-                    setStorageData(update).then(() => {
-                        allData[storageKey] = workEntry;
-                        resolve();
-                    });
-                });
-            });
-        }
+  if (workEntry && workEntry.images && workEntry.images[imageSelector]) {
+    const imageData = workEntry.images[imageSelector];
+    if (imageData.boxes && imageData.boxes[boxIndex]) {
+      imageData.boxes[boxIndex].note = newText;
+      workEntry.metadata.lastUpdated = Date.now();
+      return saveWorkEntryWithIndex(storageKey, workEntry).then(() => {
+        allData[storageKey] = workEntry;
+      });
     }
-    return Promise.resolve();
+  }
+  return Promise.resolve();
 }
 
 export function updateNoteInStorage(url, index, newText, allData) {
-    // Legacy function for backward compatibility
-    const notes = allData[url];
-    if (notes && notes[index]) {
-        notes[index].note = newText;
-        const update = {};
-        update[url] = notes;
-        return setStorageData(update);
-    }
-    return Promise.resolve();
+  const notes = allData[url];
+  if (notes && notes[index]) {
+    notes[index].note = newText;
+    return setStorageData({ [url]: notes });
+  }
+  return Promise.resolve();
 }
 
-// Debug function to inspect storage
 export function inspectStorage() {
-    return new Promise((resolve) => {
-        chrome.storage.local.get(null, (items) => {
-            console.log('Storage contents:', items);
-            console.log('Storage keys:', Object.keys(items));
-            const size = JSON.stringify(items).length;
-            console.log('Storage size (JSON):', size, 'bytes');
-            resolve(items);
-        });
-    });
+  return getAllData().then((items) => {
+    console.log('Storage contents:', items);
+    console.log('Storage keys:', Object.keys(items));
+    console.log('Storage size (JSON):', JSON.stringify(items).length, 'bytes');
+    return items;
+  });
 }

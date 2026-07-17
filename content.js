@@ -342,6 +342,7 @@
 
     // loadBoxes can be triggered many times on page load (DOM ready, window load, img load, retries).
     let loadBoxesGeneration = 0;
+    let saveInFlight = false;
 
     function clearPageOverlays() {
         if (!root) return;
@@ -503,6 +504,13 @@
                 }
             }
         });
+
+        if (globalThis.DeepOverlayStorage) {
+            globalThis.DeepOverlayStorage.onOverlayChanged(() => {
+                if (saveInFlight) return;
+                loadBoxes();
+            });
+        }
     }
 
     // --- Visual Settings ---
@@ -1072,7 +1080,9 @@
 
         const delBtn = document.createElement('button');
         delBtn.innerText = "Delete";
-        delBtn.onclick = () => {
+        delBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             box.remove();
             saveAllBoxes();
             bubble.remove();
@@ -1132,17 +1142,20 @@
 
     function saveAllBoxes() {
         if (!chrome.runtime?.id) return;
-        
+        const storage = globalThis.DeepOverlayStorage;
+        if (!storage) {
+            console.error('DeepOverlay: storage-client not loaded');
+            return;
+        }
+
         const currentUrl = window.location.href;
         const workData = adapters().extractWorkMeta(currentUrl);
         const storageKey = adapters().getStorageKey(currentUrl);
         const pageUrl = getCurrentPageUrl();
         const timestamp = Date.now();
-        const INDEX_KEY = adapters().INDEX_KEY;
-        
-        // Get or create work entry
-        chrome.storage.local.get([storageKey, INDEX_KEY], (result) => {
-            let workEntry = result[storageKey] || {
+
+        storage.ensureReady().then(() => storage.getWorkEntry(storageKey)).then((existing) => {
+            let workEntry = existing || {
                 workId: workData.workId,
                 site: workData.site,
                 baseUrl: workData.normalizedUrl,
@@ -1154,54 +1167,87 @@
                 }
             };
             delete workEntry.legacyFlatBoxes;
-            
-            // Update metadata
+
+            workEntry.site = workEntry.site || workData.site;
+            workEntry.workId = workEntry.workId ?? workData.workId;
+            workEntry.baseUrl = workEntry.baseUrl || workData.normalizedUrl;
+            workEntry.images = workEntry.images || {};
+
+            workEntry.metadata = workEntry.metadata || {
+                firstSeen: timestamp,
+                lastUpdated: timestamp,
+                urlVariants: []
+            };
             workEntry.metadata.lastUpdated = timestamp;
             if (!workEntry.metadata.urlVariants.includes(currentUrl)) {
                 workEntry.metadata.urlVariants.push(currentUrl);
             }
-            
-            // Collect boxes grouped by image
-            const imageBoxes = new Map(); // Map<imageSelector, boxes[]>
-            
-            // First, collect boxes from image overlays
-            selectedImages.forEach((containerData, img) => {
-                const selector = containerData.overlayContainer.dataset.imageSelector;
+
+            const imageBoxes = new Map();
+
+            // Collect from every image overlay in the DOM (not only selectedImages).
+            root.querySelectorAll('.deep-image-overlay').forEach((overlay) => {
+                const selector = overlay.dataset.imageSelector;
                 if (!selector) return;
-                
+
+                const img = findImageForOverlay(overlay);
                 const boxes = [];
-                containerData.overlayContainer.querySelectorAll('.deep-box').forEach(box => {
+                overlay.querySelectorAll('.deep-box').forEach((box) => {
                     boxes.push({
                         percentLeft: parseFloat(box.dataset.percentLeft) || 0,
                         percentTop: parseFloat(box.dataset.percentTop) || 0,
                         percentWidth: parseFloat(box.dataset.percentWidth) || 0,
                         percentHeight: parseFloat(box.dataset.percentHeight) || 0,
-                        note: box.dataset.note || "",
+                        note: box.dataset.note || '',
                         imageSelector: selector,
-                        imageSrc: box.dataset.imageSrc || img.src || ""
+                        imageSrc: box.dataset.imageSrc || img?.src || overlay.dataset.imageSrc || '',
                     });
                 });
-                
+
                 if (boxes.length > 0) {
                     imageBoxes.set(selector, {
-                        selector: selector,
-                        src: img.src || "",
-                        pageUrl: pageUrl,
-                        boxes: boxes
+                        selector,
+                        src: img?.src || overlay.dataset.imageSrc || '',
+                        pageUrl,
+                        boxes,
                     });
                 }
             });
-            
-            // Also collect boxes not in image overlays (legacy support)
+
+            selectedImages.forEach((containerData, img) => {
+                const selector = containerData.overlayContainer.dataset.imageSelector;
+                if (!selector || imageBoxes.has(selector)) return;
+
+                const boxes = [];
+                containerData.overlayContainer.querySelectorAll('.deep-box').forEach((box) => {
+                    boxes.push({
+                        percentLeft: parseFloat(box.dataset.percentLeft) || 0,
+                        percentTop: parseFloat(box.dataset.percentTop) || 0,
+                        percentWidth: parseFloat(box.dataset.percentWidth) || 0,
+                        percentHeight: parseFloat(box.dataset.percentHeight) || 0,
+                        note: box.dataset.note || '',
+                        imageSelector: selector,
+                        imageSrc: box.dataset.imageSrc || img.src || '',
+                    });
+                });
+
+                if (boxes.length > 0) {
+                    imageBoxes.set(selector, {
+                        selector,
+                        src: img.src || '',
+                        pageUrl,
+                        boxes,
+                    });
+                }
+            });
+
             document.querySelectorAll('.deep-box').forEach(box => {
-                if (box.closest('.deep-image-overlay')) return; // Already handled
-                
-                // For legacy boxes, try to find if they're near an image
+                if (box.closest('.deep-image-overlay')) return;
+
                 const boxRect = box.getBoundingClientRect();
                 const centerX = boxRect.left + boxRect.width / 2;
                 const centerY = boxRect.top + boxRect.height / 2;
-                
-                // Find nearest image
+
                 let nearestImg = null;
                 let minDist = Infinity;
                 document.querySelectorAll('img').forEach(img => {
@@ -1216,7 +1262,7 @@
                         nearestImg = img;
                     }
                 });
-                
+
                 if (nearestImg) {
                     const selector = getUniqueSelector(nearestImg);
                     if (selector) {
@@ -1229,12 +1275,12 @@
                                 boxes: []
                             });
                         }
-                        
+
                         const percentLeft = (boxRect.left - imgRect.left) / imgRect.width;
                         const percentTop = (boxRect.top - imgRect.top) / imgRect.height;
                         const percentWidth = boxRect.width / imgRect.width;
                         const percentHeight = boxRect.height / imgRect.height;
-                        
+
                         imageBoxes.get(selector).boxes.push({
                             percentLeft: percentLeft,
                             percentTop: percentTop,
@@ -1247,18 +1293,13 @@
                     }
                 }
             });
-            
-            // Update work entry with image data.
-            // Store heavy boxes (with long OCR notes) in separate workimg:* keys to avoid
-            // Chrome storage per-item size limits.
+
             const workImgUpdates = {};
-            const workImgRemovals = [];
 
             imageBoxes.forEach((imageData, cssSelector) => {
                 const imageKey = adapters().makeImageStorageKey(pageUrl, cssSelector);
                 const refKey = adapters().makeWorkImgKey(storageKey, imageKey);
 
-                // Save full image record separately
                 workImgUpdates[refKey] = {
                     pageUrl: imageData.pageUrl,
                     selector: cssSelector,
@@ -1266,7 +1307,6 @@
                     boxes: imageData.boxes || []
                 };
 
-                // Keep only lightweight ref in work entry
                 const allNotes = (imageData.boxes || [])
                     .map((b) => (b.note || '').trim())
                     .filter(Boolean)
@@ -1283,55 +1323,78 @@
                 };
             });
 
-            // Drop legacy keys (selector-only) for this page when we saved composite keys above
             Object.keys(workEntry.images).forEach((k) => {
                 const p = adapters().parseImageStorageKey(k);
                 if (!p.legacy) return;
                 const data = workEntry.images[k];
-                if (data.pageUrl !== pageUrl) return;
+                if (normalizePageUrl(data.pageUrl || '') !== pageUrl) return;
                 if (!imageBoxes.has(p.cssSelector)) return;
                 delete workEntry.images[k];
             });
 
-            // Remove any existing workimg:* records for this page that no longer have a matching imageKey
-            Object.keys(workEntry.images).forEach((k) => {
-                const imgMeta = workEntry.images[k];
-                if (!imgMeta || typeof imgMeta !== 'object') return;
-                if (imgMeta.pageUrl !== pageUrl) return;
-                if (!imgMeta.refKey) return;
-                // If this refKey wasn't updated in this save, keep it (image might not be selected today).
-                // We only remove refs when the imageKey itself is missing from the current page selection.
-            });
-            
-            // Save to storage + _index
-            const index = Array.isArray(result[INDEX_KEY]) ? [...result[INDEX_KEY]] : [];
-            adapters().upsertIndexEntry(index, storageKey, workEntry);
-            const data = { [storageKey]: workEntry, [INDEX_KEY]: index, ...workImgUpdates };
-            chrome.storage.local.set(data, () => {
-                const err = chrome.runtime.lastError;
-                if (err) {
-                    console.error('DeepOverlay: save failed', err);
-                    showToast(`Save failed: ${err.message || err}`, 'error');
+            // Clear image records on this page that no longer have boxes.
+            const pageImageKeys = Object.keys(workEntry.images);
+            for (const imageKey of pageImageKeys) {
+                const imageMeta = workEntry.images[imageKey];
+                const metaPage = normalizePageUrl(imageMeta.pageUrl || '');
+                if (metaPage !== pageUrl) continue;
+
+                const parsed = adapters().parseImageStorageKey(imageKey);
+                const cssSelector = parsed.cssSelector;
+                const live = imageBoxes.get(cssSelector);
+                if (live?.boxes?.length) continue;
+
+                if (imageMeta.refKey) {
+                    workImgUpdates[imageMeta.refKey] = {
+                        pageUrl: imageMeta.pageUrl,
+                        selector: imageMeta.selector || cssSelector,
+                        src: imageMeta.src || '',
+                        boxes: [],
+                    };
                 }
+                delete workEntry.images[imageKey];
+            }
+
+            const domBoxCount = root.querySelectorAll('.deep-box').length;
+            const hasImages = Object.keys(workEntry.images).length > 0;
+            const hasLegacy = Array.isArray(workEntry.legacyFlatBoxes) && workEntry.legacyFlatBoxes.length > 0;
+            if (!hasImages && !hasLegacy && domBoxCount === 0) {
+                saveInFlight = true;
+                return storage.deleteOverlay(storageKey).finally(() => {
+                    saveInFlight = false;
+                });
+            }
+
+            saveInFlight = true;
+            return storage.saveOverlay({
+                storageKey,
+                workEntry,
+                workImgUpdates
+            }).finally(() => {
+                saveInFlight = false;
             });
+        }).catch((err) => {
+            saveInFlight = false;
+            console.error('DeepOverlay: save failed', err);
+            showToast(`Save failed: ${err?.message || err}`, 'error');
         });
     }
 
     function loadBoxes(retryCount = 0) {
         if (!chrome.runtime?.id) return;
+        const storage = globalThis.DeepOverlayStorage;
+        if (!storage) return;
 
         const generation = ++loadBoxesGeneration;
         clearPageOverlays();
-        
+
         const currentUrl = window.location.href;
         const storageKey = adapters().getStorageKey(currentUrl);
         const pageUrl = getCurrentPageUrl();
-        
-        chrome.storage.local.get([storageKey], (result) => {
+
+        storage.ensureReady().then(() => storage.getWorkEntry(storageKey)).then((workEntry) => {
             if (generation !== loadBoxesGeneration) return;
-            if (chrome.runtime.lastError) return;
-            
-            const workEntry = result[storageKey];
+
             if (!workEntry) {
                 loadLegacyBoxes(generation);
                 return;
@@ -1345,49 +1408,45 @@
                 loadLegacyBoxes(generation);
                 return;
             }
-            
+
             let loadedAny = false;
             const missingSelectors = [];
-            
-            // Filter images by pageUrl - only load boxes for current page
             const toLoad = [];
+
             Object.keys(workEntry.images).forEach(imageKey => {
                 const imageMeta = workEntry.images[imageKey];
-                
-                // Only load if this image is on the current page
-                if (imageMeta.pageUrl !== pageUrl) return;
+                const metaPage = normalizePageUrl(imageMeta.pageUrl || '');
+                if (metaPage !== pageUrl) return;
 
                 const parsed = adapters().parseImageStorageKey(imageKey);
                 const cssSelector = parsed.cssSelector;
                 const refKey = imageMeta.refKey;
-                
-                // Try to find the image in the DOM
+
                 let img;
                 try {
                     img = document.querySelector(cssSelector);
                 } catch (e) {
                     missingSelectors.push(cssSelector);
-                    return; // Invalid selector
+                    return;
                 }
-                
+
                 if (!img || img.tagName !== 'IMG' || !isImageVisible(img)) {
                     missingSelectors.push(cssSelector);
-                    return; // Image not found or not visible
+                    return;
                 }
-                
+
                 loadedAny = true;
                 toLoad.push({ imageKey, cssSelector, refKey, img });
-                
             });
 
             const refKeys = toLoad.map((x) => x.refKey).filter(Boolean);
-            chrome.storage.local.get(refKeys, (imgRes) => {
+            return storage.getWorkImages(refKeys).then((imgRes) => {
                 if (generation !== loadBoxesGeneration) return;
+
                 toLoad.forEach(({ refKey, cssSelector, img }) => {
                     const imageData = refKey ? imgRes[refKey] : null;
                     const boxes = imageData?.boxes || [];
 
-                    // Select the image and create overlay container
                     if (!selectedImages.has(img)) {
                         img.classList.add('deep-image-selected');
                         const containerData = createImageOverlayContainer(img);
@@ -1402,52 +1461,44 @@
                         box.dataset.note = boxData.note || "";
                         box.dataset.imageSelector = cssSelector;
                         box.dataset.imageSrc = boxData.imageSrc || imageData?.src || "";
-                        
-                        // Store percentage values
+
                         box.dataset.percentLeft = boxData.percentLeft;
                         box.dataset.percentTop = boxData.percentTop;
                         box.dataset.percentWidth = boxData.percentWidth;
                         box.dataset.percentHeight = boxData.percentHeight;
-                        
-                        // Calculate initial pixel positions from percentages
+
                         const imgRect = img.getBoundingClientRect();
                         box.style.left = (imgRect.width * boxData.percentLeft) + 'px';
                         box.style.top = (imgRect.height * boxData.percentTop) + 'px';
                         box.style.width = (imgRect.width * boxData.percentWidth) + 'px';
                         box.style.height = (imgRect.height * boxData.percentHeight) + 'px';
-                        
+
                         setupBoxEvents(box);
                         applyVisualSettingsToBox(box);
-                        
-                        // Add resize handle
+
                         if (!box.querySelector('.deep-resize-handle')) {
                             const handle = document.createElement('div');
                             handle.className = 'deep-resize-handle';
                             box.appendChild(handle);
                         }
-                        
+
                         overlayContainer.appendChild(box);
                     });
                 });
 
-                // If some images weren't found and we haven't retried too many times, retry
                 if (missingSelectors.length > 0 && retryCount < 30) {
                     const delay = Math.min(120 * Math.pow(1.45, retryCount), 3000);
-                    setTimeout(() => {
-                        loadBoxes(retryCount + 1);
-                    }, delay);
+                    setTimeout(() => loadBoxes(retryCount + 1), delay);
                 }
-                
-                // Initial position update
+
                 if (loadedAny) {
                     updateBoxPositions();
                     applyVisualSettings();
                 }
-                
-                // Always update UI to reflect current state (even if no images loaded)
                 updateImageSelectionUI();
             });
-            
+        }).catch((err) => {
+            console.warn('DeepOverlay: loadBoxes failed', err);
         });
     }
     
@@ -1479,27 +1530,44 @@
     }
 
     function loadLegacyBoxes(generation) {
-        // Fallback: raw URL key with array of boxes (pre–work-entry migration)
+        const storage = globalThis.DeepOverlayStorage;
         const url = getUrl();
-        chrome.storage.local.get([url], (result) => {
-            if (generation !== loadBoxesGeneration) return;
-            if (chrome.runtime.lastError) return;
-            const boxes = result[url] || [];
-            boxes.forEach((d) => appendLegacyBoxData(d));
-            updateBoxPositions();
-            applyVisualSettings();
-        });
+        if (!storage) return;
+
+        storage.ensureReady()
+            .then(() => storage.getWorkEntry(adapters().getStorageKey(url)))
+            .then((workEntry) => {
+                if (generation !== loadBoxesGeneration) return;
+                if (workEntry?.legacyFlatBoxes) {
+                    loadLegacyFlatFromEntry(workEntry.legacyFlatBoxes);
+                    return;
+                }
+                return storage.getWorkEntry(url).then((legacy) => {
+                    if (generation !== loadBoxesGeneration) return;
+                    const boxes = Array.isArray(legacy) ? legacy : [];
+                    boxes.forEach((d) => appendLegacyBoxData(d));
+                    updateBoxPositions();
+                    applyVisualSettings();
+                });
+            })
+            .catch(() => {});
+    }
+
+    function normalizePageUrl(url) {
+        try {
+            const u = new URL(url);
+            let path = u.pathname;
+            if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+            return u.origin + path;
+        } catch {
+            let s = String(url).split('?')[0].split('#')[0];
+            if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1);
+            return s;
+        }
     }
 
     function getCurrentPageUrl() {
-        // Get current URL without hash/query for page matching
-        const url = window.location.href;
-        try {
-            const urlObj = new URL(url);
-            return urlObj.origin + urlObj.pathname;
-        } catch (e) {
-            return url.split('?')[0].split('#')[0];
-        }
+        return normalizePageUrl(window.location.href);
     }
 
     // --- Utils ---
@@ -1581,12 +1649,17 @@
     function disableImageSelectionMode() {
         imageSelectionMode = false;
         shell.classList.remove('image-selection-mode');
-        
+
         // Remove hover effects from all images
         document.querySelectorAll('img').forEach(img => {
             img.classList.remove('deep-image-hover');
         });
-        
+
+        // Persist overlays before tearing down selection tracking.
+        if (root?.querySelectorAll('.deep-box').length) {
+            saveAllBoxes();
+        }
+
         // Deselect all images and clean up observers
         selectedImages.forEach((containerData, img) => {
             if (containerData.resizeObserver) {

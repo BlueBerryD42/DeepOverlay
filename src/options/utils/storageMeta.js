@@ -9,6 +9,8 @@ export function isDashboardMetaKey(storageKey) {
     if (storageKey === INDEX_KEY || storageKey === SCHEMA_VERSION_KEY) return true;
     if (storageKey === 'theme' || storageKey === 'settings') return true;
     if (storageKey.startsWith('overlay_')) return true;
+    if (storageKey.startsWith('workimg:')) return true;
+    if (storageKey === 'likes:thumbCache') return true;
     return false;
 }
 

@@ -74,6 +74,7 @@
               <option value="legacy">Archive (legacy)</option>
             </select>
           </div>
+          <div id="library-pagination" class="do-pagination" hidden aria-label="Pagination"></div>
           <div id="dashboard-list">
             <div class="empty-state">Loading…</div>
           </div>
@@ -88,31 +89,42 @@
         </div>
         <div class="do-panel-body" id="likes-panel-body">
           <div class="do-likes-import-bar" id="likes-import-bar">
-            <input type="file" id="likes-file-input" accept=".js,text/javascript,application/javascript" hidden>
+            <input type="file" id="likes-file-input" accept=".js,.json,text/javascript,application/javascript,application/json" hidden>
             <button type="button" class="do-btn do-btn-accent" id="likes-import-btn">↑ Import like.js</button>
             <button type="button" class="do-btn" id="likes-import-bundled-btn">Use extension data/like.js</button>
+            <button type="button" class="do-btn" id="likes-export-sync-btn" hidden>↓ Export sync file</button>
             <button type="button" class="do-btn" id="likes-reimport-btn" hidden>Re-import file</button>
             <label class="do-likes-merge-toggle" id="likes-merge-wrap" hidden>
-              <input type="checkbox" id="likes-reimport-merge">
-              Merge with existing
+              <input type="checkbox" id="likes-reimport-merge" checked>
+              Merge new only (prepend)
             </label>
           </div>
-          <div class="do-likes-toolbar">
+          <p class="do-likes-sync-hint" id="likes-sync-hint" hidden>
+            Sync: export sync file → run Tampermonkey on X Likes → import the JSON with merge checked.
+          </p>
+          <div class="do-library-filters do-likes-filters">
             <label class="do-sr-only" for="likes-search-input">Search likes</label>
-            <input class="do-search do-search-grow" type="search" id="likes-search-input" placeholder="/ search captions, tweet ids…" autocomplete="off">
-            <label class="do-likes-media-toggle">
-              <input type="checkbox" id="likes-media-only">
-              Media only
-            </label>
+            <input class="do-search do-search-grow" type="search" id="likes-search-input" placeholder="Search captions, tweet ids…" autocomplete="off">
+            <label class="do-sr-only" for="likes-filter">Filter likes</label>
+            <select id="likes-filter" class="do-select-site do-select-likes-filter" aria-label="Filter likes">
+              <option value="all" selected>All likes</option>
+              <option value="video">Video / GIF</option>
+              <option value="image">Images only</option>
+              <option value="single">Single image</option>
+              <option value="multiple">Multiple images</option>
+              <option value="with-overlay">With overlay</option>
+              <option value="no-overlay">No overlay</option>
+            </select>
           </div>
           <div class="do-likes-meta">
             <span id="likes-status">Open this tab to load likes.</span>
             <span id="likes-progress" class="do-likes-progress"></span>
           </div>
+          <div id="likes-pagination-top" class="do-pagination do-pagination--top" hidden aria-label="Likes pagination"></div>
           <div id="likes-grid" class="do-likes-grid">
             <div class="empty-state">Loading…</div>
           </div>
-          <div id="likes-pagination" class="do-pagination" hidden aria-label="Likes pagination"></div>
+          <div id="likes-pagination-bottom" class="do-pagination do-pagination--bottom" hidden aria-label="Likes pagination"></div>
           <div id="likes-lightbox" aria-hidden="true"></div>
         </div>
       </section>

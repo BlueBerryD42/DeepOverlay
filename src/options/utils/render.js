@@ -2,46 +2,9 @@
 
 import { createWorkCard } from '../components/WorkCard.js';
 import { filterAndGroupData, orderWorksForDashboard, filterWorks } from './filters.js';
+import { renderPaginationBar } from './paginationBar.js';
 
 export const LIBRARY_PAGE_SIZE = 12;
-
-function renderPaginationBar(el, { page, totalPages, totalWorks, pageSize, onPageChange }) {
-    if (!el || !onPageChange) return;
-    if (totalPages <= 1) {
-        el.innerHTML = '';
-        el.hidden = true;
-        return;
-    }
-    el.hidden = false;
-    el.innerHTML = '';
-    el.className = 'do-pagination';
-    el.setAttribute('role', 'navigation');
-    el.setAttribute('aria-label', 'Library pages');
-
-    const prev = document.createElement('button');
-    prev.type = 'button';
-    prev.className = 'do-btn';
-    prev.textContent = '← Prev';
-    prev.disabled = page <= 1;
-    prev.onclick = () => onPageChange(page - 1);
-
-    const info = document.createElement('span');
-    info.className = 'do-pagination-info';
-    const start = (page - 1) * pageSize + 1;
-    const end = Math.min(page * pageSize, totalWorks);
-    info.textContent = `Page ${page} / ${totalPages} · ${start}–${end} of ${totalWorks}`;
-
-    const next = document.createElement('button');
-    next.type = 'button';
-    next.className = 'do-btn';
-    next.textContent = 'Next →';
-    next.disabled = page >= totalPages;
-    next.onclick = () => onPageChange(page + 1);
-
-    el.appendChild(prev);
-    el.appendChild(info);
-    el.appendChild(next);
-}
 
 /**
  * @param {Record<string, unknown>} allData
@@ -95,9 +58,10 @@ export function renderDashboard(allData, query = '', listContainer, onWorkDelete
     renderPaginationBar(paginationEl, {
         page: currentPage,
         totalPages,
-        totalWorks,
+        totalItems: totalWorks,
         pageSize,
-        onPageChange
+        onPageChange,
+        ariaLabel: 'Library pages',
     });
 
     return { totalWorks, totalPages, currentPage };

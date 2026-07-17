@@ -1,22 +1,98 @@
 // Likes gallery rendering — filter, pagination, masonry, lightbox
 
 import { createLikeCard, updateLikeCardThumb } from '../components/LikeCard.js';
+import { renderPaginationBar } from './paginationBar.js';
 
 export const LIKES_PAGE_SIZE = 48;
+
+/** Match .do-likes-grid column-count breakpoints in options.css */
+export function getLikesColumnCount(width = typeof window !== 'undefined' ? window.innerWidth : 1400) {
+  if (width <= 600) return 1;
+  if (width <= 1100) return 2;
+  if (width <= 1400) return 3;
+  return 4;
+}
+
+/**
+ * Reorder items for CSS column layout so visual reading is left-to-right, top-to-bottom.
+ * @template T
+ * @param {T[]} items — newest-first
+ * @param {number} colCount
+ * @returns {T[]}
+ */
+export function orderForColumnLayout(items, colCount) {
+  const n = items.length;
+  if (n <= 1 || colCount <= 1) return items;
+
+  const numRows = Math.ceil(n / colCount);
+  const columns = Array.from({ length: colCount }, () => []);
+  for (let col = 0; col < colCount; col++) {
+    for (let row = 0; row < numRows; row++) {
+      const idx = row * colCount + col;
+      if (idx < n) columns[col].push(items[idx]);
+    }
+  }
+  return columns.flat();
+}
+
+/** @typedef {'all' | 'video' | 'image' | 'single' | 'multiple' | 'with-overlay' | 'no-overlay'} LikesFilter */
+
+/**
+ * @param {{ mediaUrl?: string; mediaUrls?: string[]; mediaType?: string; resolvedAt?: number }} thumb
+ */
+function photoCount(thumb) {
+  if (thumb.mediaUrls?.length) return thumb.mediaUrls.length;
+  if (thumb.mediaUrl && thumb.mediaType === 'photo') return 1;
+  return 0;
+}
+
+/**
+ * @param {{ mediaType?: string; mediaUrl?: string }} thumb
+ */
+function isVideoLike(thumb) {
+  return thumb.mediaType === 'video' || thumb.mediaType === 'gif';
+}
+
+/**
+ * @param {{ mediaType?: string; mediaUrl?: string }} thumb
+ */
+function isPhotoLike(thumb) {
+  return thumb.mediaType === 'photo' && !!thumb.mediaUrl;
+}
+
+/**
+ * @param {LikesFilter} filter
+ * @param {{ mediaUrl?: string; mediaUrls?: string[]; mediaType?: string; resolvedAt?: number }} thumb
+ * @param {string} tweetId
+ * @param {Set<string>} overlayTweetIds
+ */
+function matchesLikesFilter(filter, thumb, tweetId, overlayTweetIds) {
+  if (filter === 'with-overlay') return overlayTweetIds.has(tweetId);
+  if (filter === 'no-overlay') return !overlayTweetIds.has(tweetId);
+  if (filter === 'all') return true;
+  if (!thumb?.resolvedAt) return false;
+
+  if (filter === 'video') return isVideoLike(thumb);
+  if (filter === 'image') return isPhotoLike(thumb);
+  if (filter === 'single') return isPhotoLike(thumb) && photoCount(thumb) === 1;
+  if (filter === 'multiple') return isPhotoLike(thumb) && photoCount(thumb) > 1;
+
+  return true;
+}
 
 /**
  * @param {Array<{ tweetId: string; text: string; postUrl: string }>} likes
  * @param {string} query
- * @param {boolean} mediaOnly
- * @param {Record<string, { mediaUrl?: string; mediaType?: string }>} thumbCache
+ * @param {LikesFilter} filter
+ * @param {Record<string, { mediaUrl?: string; mediaUrls?: string[]; mediaType?: string; resolvedAt?: number }>} thumbCache
+ * @param {Set<string>} [overlayTweetIds]
  */
-export function filterLikes(likes, query, mediaOnly, thumbCache) {
+export function filterLikes(likes, query, filter, thumbCache, overlayTweetIds = new Set()) {
   const q = query.trim().toLowerCase();
   return likes.filter((like) => {
-    if (mediaOnly) {
+    if (filter !== 'all') {
       const thumb = thumbCache[like.tweetId];
-      if (!thumb?.resolvedAt) return true;
-      if (thumb.mediaType === 'none' || !thumb.mediaUrl) return false;
+      if (!matchesLikesFilter(filter, thumb || {}, like.tweetId, overlayTweetIds)) return false;
     }
     if (!q) return true;
     return (
@@ -25,44 +101,6 @@ export function filterLikes(likes, query, mediaOnly, thumbCache) {
       like.postUrl.toLowerCase().includes(q)
     );
   });
-}
-
-function renderPaginationBar(el, { page, totalPages, totalItems, pageSize, onPageChange }) {
-  if (!el || !onPageChange) return;
-  if (totalPages <= 1) {
-    el.innerHTML = '';
-    el.hidden = true;
-    return;
-  }
-  el.hidden = false;
-  el.innerHTML = '';
-  el.className = 'do-pagination';
-  el.setAttribute('role', 'navigation');
-  el.setAttribute('aria-label', 'Likes pages');
-
-  const prev = document.createElement('button');
-  prev.type = 'button';
-  prev.className = 'do-btn';
-  prev.textContent = '← Prev';
-  prev.disabled = page <= 1;
-  prev.onclick = () => onPageChange(page - 1);
-
-  const info = document.createElement('span');
-  info.className = 'do-pagination-info';
-  const start = (page - 1) * pageSize + 1;
-  const end = Math.min(page * pageSize, totalItems);
-  info.textContent = `Page ${page} / ${totalPages} · ${start}–${end} of ${totalItems}`;
-
-  const next = document.createElement('button');
-  next.type = 'button';
-  next.className = 'do-btn';
-  next.textContent = 'Next →';
-  next.disabled = page >= totalPages;
-  next.onclick = () => onPageChange(page + 1);
-
-  el.appendChild(prev);
-  el.appendChild(info);
-  el.appendChild(next);
 }
 
 function ensureLightbox(container) {
@@ -116,9 +154,18 @@ function ensureLightbox(container) {
 
   document.addEventListener('keydown', (e) => {
     if (lb.hidden) return;
-    if (e.key === 'Escape') hide();
-    else if (e.key === 'ArrowLeft') lb.querySelector('.do-likes-lightbox-prev').click();
-    else if (e.key === 'ArrowRight') lb.querySelector('.do-likes-lightbox-next').click();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      hide();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      e.stopPropagation();
+      lb.querySelector('.do-likes-lightbox-prev').click();
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      e.stopPropagation();
+      lb.querySelector('.do-likes-lightbox-next').click();
+    }
   });
 
   lb._open = (urls, index = 0) => {
@@ -134,33 +181,37 @@ function ensureLightbox(container) {
  * @param {object} opts
  * @param {Array} opts.likes
  * @param {string} opts.query
- * @param {boolean} opts.mediaOnly
+ * @param {LikesFilter} [opts.filter]
  * @param {Record<string, unknown>} opts.thumbCache
+ * @param {Set<string>} [opts.overlayTweetIds]
  * @param {number} opts.page
  * @param {HTMLElement} opts.gridEl
  * @param {HTMLElement | null} opts.paginationEl
  * @param {HTMLElement | null} opts.lightboxEl
  * @param {(p: number) => void} opts.onPageChange
- * @param {(tweetId: string) => void} [opts.onHide]
  * @param {(tweetId: string) => void} [opts.onDelete]
+ * @param {Set<string>} [opts.selectedTweetIds]
+ * @param {(tweetId: string, selected: boolean) => void} [opts.onSelectToggle]
  * @returns {{ filtered: Array; totalPages: number; currentPage: number; pageItems: Array }}
  */
 export function renderLikes(opts) {
   const {
     likes,
     query = '',
-    mediaOnly = false,
+    filter = 'all',
     thumbCache = {},
+    overlayTweetIds = new Set(),
     page = 1,
     gridEl,
     paginationEl,
     lightboxEl,
     onPageChange,
-    onHide,
     onDelete,
+    selectedTweetIds,
+    onSelectToggle,
   } = opts;
 
-  const filtered = filterLikes(likes, query, mediaOnly, thumbCache);
+  const filtered = filterLikes(likes, query, filter, thumbCache, overlayTweetIds);
   const totalItems = filtered.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / LIKES_PAGE_SIZE));
   const currentPage = Math.min(Math.max(1, page), totalPages);
@@ -175,14 +226,25 @@ export function renderLikes(opts) {
   gridEl.className = 'do-likes-grid';
 
   if (totalItems === 0) {
-    gridEl.innerHTML = `<div class="empty-state">${query || mediaOnly ? 'No likes match your filters.' : 'No likes loaded.'}</div>`;
+    gridEl.innerHTML = `<div class="empty-state">${query || filter !== 'all' ? 'No likes match your filters.' : 'No likes loaded.'}</div>`;
   } else {
     const lightbox = ensureLightbox(lightboxEl || gridEl.parentElement);
     const openLightbox = (urls, index) => lightbox._open(urls, index);
+    const colCount = getLikesColumnCount();
+    const displayItems = orderForColumnLayout(pageItems, colCount);
 
-    for (const like of pageItems) {
+    for (const like of displayItems) {
       const thumb = thumbCache[like.tweetId];
-      gridEl.appendChild(createLikeCard(like, thumb, { onOpenLightbox: openLightbox, onHide, onDelete }));
+      const hasOverlay = overlayTweetIds.has(like.tweetId);
+      gridEl.appendChild(
+        createLikeCard(like, thumb, {
+          onOpenLightbox: openLightbox,
+          onDelete,
+          hasOverlay,
+          selectedTweetIds,
+          onSelectToggle,
+        })
+      );
     }
   }
 
@@ -192,6 +254,7 @@ export function renderLikes(opts) {
     totalItems,
     pageSize: LIKES_PAGE_SIZE,
     onPageChange,
+    ariaLabel: 'Likes pages',
   });
 
   return { filtered, totalPages, currentPage, pageItems };
@@ -214,7 +277,14 @@ export function refreshLikeCardThumbs(gridEl, pageItems, thumbCache, lightboxEl,
     const card = gridEl.querySelector(`[data-tweet-id="${like.tweetId}"]`);
     if (!card) continue;
     const thumb = thumbCache[like.tweetId];
-    if (!thumb?.resolvedAt) continue;
+    if (!thumb?.resolvedAt && !cardOpts.overlayTweetIds?.has(like.tweetId)) continue;
+    const opts = {
+      onOpenLightbox: openLightbox,
+      onDelete: cardOpts.onDelete,
+      hasOverlay: cardOpts.overlayTweetIds?.has(like.tweetId) ?? !!cardOpts.hasOverlay,
+      selectedTweetIds: cardOpts.selectedTweetIds,
+      onSelectToggle: cardOpts.onSelectToggle,
+    };
     updateLikeCardThumb(card, like, thumb, opts);
   }
 }

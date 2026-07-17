@@ -55,8 +55,9 @@ export function filterAndGroupData(allData, query = "") {
 
         const val = allData[storageKey];
         
-        // Check if it's new format (work entry) or legacy format (array of boxes)
-        if (val && typeof val === 'object' && val.images && val.workId !== undefined) {
+        // New format: work entry (work:* keys, or legacy rows that still have images)
+        if (val && typeof val === 'object' && val.images != null &&
+            (val.workId !== undefined || storageKey.startsWith('work:'))) {
             // New format: work entry
             const workEntry = val;
             

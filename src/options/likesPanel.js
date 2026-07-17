@@ -1,23 +1,29 @@
 // Likes panel — IndexedDB library (import once, CRUD after)
 
-import { parseLikeArchive } from './utils/parseLikeArchive.js';
+import { parseLikeImport, isSyncExportFormat } from './utils/parseLikeImport.js';
 import {
   hasImportedLikes,
   getLikesMeta,
   importLikes,
+  exportLikesLibrary,
   getAllLikes,
   getAllThumbsMap,
-  hideLike,
   deleteLike,
+  deleteLikes,
   requestThumbResolve,
 } from './utils/likesDb.js';
 import { renderLikes, refreshLikeCardThumbs, LIKES_PAGE_SIZE } from './utils/renderLikes.js';
+import { getAnnotatedXTweetIds } from './utils/likesOverlay.js';
+import { subscribeOverlayChanges } from '../../lib/storage-broadcast.mjs';
+import { syncPaginationKeyboard } from './utils/paginationKeyboard.js';
 
 const RESOLVE_BATCH = 24;
 
 /** @type {Array<{ tweetId: string; text: string; postUrl: string }> | null} */
 let likesCache = null;
 let thumbCache = {};
+/** @type {Set<string>} */
+let overlayTweetIds = new Set();
 let likesPage = 1;
 let resolveInFlight = false;
 let panelLoaded = false;
@@ -27,10 +33,13 @@ let panelLoaded = false;
  */
 export function initLikesPanel() {
   const gridEl = document.getElementById('likes-grid');
-  const paginationEl = document.getElementById('likes-pagination');
+  const paginationEls = [
+    document.getElementById('likes-pagination-top'),
+    document.getElementById('likes-pagination-bottom'),
+  ];
   const lightboxEl = document.getElementById('likes-lightbox');
   const searchInput = document.getElementById('likes-search-input');
-  const mediaOnlyEl = document.getElementById('likes-media-only');
+  const filterEl = document.getElementById('likes-filter');
   const progressEl = document.getElementById('likes-progress');
   const countEl = document.getElementById('likes-nav-count');
   const statusEl = document.getElementById('likes-status');
@@ -38,17 +47,87 @@ export function initLikesPanel() {
   const importBtn = document.getElementById('likes-import-btn');
   const bundledBtn = document.getElementById('likes-import-bundled-btn');
   const reimportBtn = document.getElementById('likes-reimport-btn');
+  const exportSyncBtn = document.getElementById('likes-export-sync-btn');
+  const syncHintEl = document.getElementById('likes-sync-hint');
   const fileInput = document.getElementById('likes-file-input');
   const mergeWrap = document.getElementById('likes-merge-wrap');
   const mergeEl = document.getElementById('likes-reimport-merge');
 
   if (!gridEl) return () => {};
 
-  let mediaOnly = mediaOnlyEl?.checked ?? false;
+  let likesFilter = filterEl?.value || 'all';
+  /** @type {Set<string>} */
+  let selectedLikes = new Set();
+  let bulkBar = null;
+
+  function ensureBulkBar() {
+    if (bulkBar) return bulkBar;
+    const paginationTop = document.getElementById('likes-pagination-top');
+    bulkBar = document.createElement('div');
+    bulkBar.id = 'likes-bulk-bar';
+    bulkBar.className = 'do-likes-bulk-bar bulk-actions-bar';
+    bulkBar.hidden = true;
+    bulkBar.innerHTML = `
+      <div class="bulk-actions-left">
+        <span class="bulk-selection-count">0 selected</span>
+      </div>
+      <div class="bulk-actions-right">
+        <button type="button" class="do-btn" data-action="select-page">Select page</button>
+        <button type="button" class="do-btn danger" data-action="delete">Delete selected</button>
+        <button type="button" class="do-btn" data-action="clear">Clear</button>
+      </div>
+    `;
+    bulkBar.querySelector('[data-action="select-page"]')?.addEventListener('click', selectAllOnPage);
+    bulkBar.querySelector('[data-action="delete"]')?.addEventListener('click', handleBulkDelete);
+    bulkBar.querySelector('[data-action="clear"]')?.addEventListener('click', clearSelection);
+    const anchor = paginationTop || gridEl;
+    anchor.parentNode?.insertBefore(bulkBar, anchor);
+    return bulkBar;
+  }
+
+  function updateBulkBar() {
+    const bar = ensureBulkBar();
+    const countEl = bar.querySelector('.bulk-selection-count');
+    if (countEl) countEl.textContent = `${selectedLikes.size} selected`;
+    bar.hidden = selectedLikes.size === 0;
+  }
+
+  function clearSelection() {
+    selectedLikes.clear();
+    updateBulkBar();
+    renderCurrent();
+  }
+
+  function selectAllOnPage() {
+    if (!likesCache) return;
+    const { pageItems } = renderLikes({
+      likes: likesCache,
+      query: searchInput?.value || '',
+      filter: likesFilter,
+      thumbCache,
+      overlayTweetIds,
+      page: likesPage,
+      gridEl: null,
+      paginationEl: null,
+      lightboxEl: null,
+      onPageChange: () => {},
+    });
+    for (const like of pageItems) selectedLikes.add(like.tweetId);
+    updateBulkBar();
+    renderCurrent();
+  }
+
+  function handleSelectToggle(tweetId, selected) {
+    if (selected) selectedLikes.add(tweetId);
+    else selectedLikes.delete(tweetId);
+    updateBulkBar();
+  }
 
   const cardOpts = () => ({
-    onHide: handleHide,
     onDelete: handleDelete,
+    overlayTweetIds,
+    selectedTweetIds: selectedLikes,
+    onSelectToggle: handleSelectToggle,
   });
 
   function updateNavCount(n) {
@@ -59,7 +138,9 @@ export function initLikesPanel() {
     if (importBtn) importBtn.hidden = imported;
     if (bundledBtn) bundledBtn.hidden = imported;
     if (reimportBtn) reimportBtn.hidden = !imported;
+    if (exportSyncBtn) exportSyncBtn.hidden = !imported;
     if (mergeWrap) mergeWrap.hidden = !imported;
+    if (syncHintEl) syncHintEl.hidden = !imported;
   }
 
   function countResolved(cache) {
@@ -74,12 +155,19 @@ export function initLikesPanel() {
     if (!progressEl || !likesCache) return;
     const resolved = countResolved(thumbCache);
     const withMedia = countWithMedia(thumbCache);
-    progressEl.textContent = `Thumbnails: ${resolved} / ${likesCache.length} resolved · ${withMedia} with media`;
+    const withOverlay = overlayTweetIds.size;
+    progressEl.textContent =
+      `Thumbnails: ${resolved} / ${likesCache.length} resolved · ${withMedia} with media · ${withOverlay} with overlay`;
+  }
+
+  async function reloadOverlayLinks() {
+    overlayTweetIds = await getAnnotatedXTweetIds();
   }
 
   async function reloadFromDb() {
     likesCache = await getAllLikes();
     thumbCache = await getAllThumbsMap();
+    await reloadOverlayLinks();
     updateNavCount(likesCache.length);
     const meta = await getLikesMeta();
     if (statusEl) {
@@ -97,22 +185,35 @@ export function initLikesPanel() {
     const r = renderLikes({
       likes: likesCache,
       query: searchInput?.value || '',
-      mediaOnly,
+      filter: likesFilter,
       thumbCache,
+      overlayTweetIds,
       page: likesPage,
       gridEl,
-      paginationEl,
+      paginationEl: paginationEls,
       lightboxEl,
       onPageChange: (p) => {
         likesPage = p;
         renderCurrent();
         queueResolveForPage();
       },
-      onHide: opts.onHide,
       onDelete: opts.onDelete,
+      selectedTweetIds: opts.selectedTweetIds,
+      onSelectToggle: opts.onSelectToggle,
     });
     likesPage = r.currentPage;
+    syncPaginationKeyboard({
+      panelId: 'likes',
+      page: likesPage,
+      totalPages: r.totalPages,
+      onPageChange: (p) => {
+        likesPage = p;
+        renderCurrent();
+        queueResolveForPage();
+      },
+    });
     updateProgress();
+    updateBulkBar();
     return r;
   }
 
@@ -135,11 +236,12 @@ export function initLikesPanel() {
         const { pageItems } = renderLikes({
           likes: likesCache,
           query: searchInput?.value || '',
-          mediaOnly,
+          filter: likesFilter,
           thumbCache,
+          overlayTweetIds,
           page: likesPage,
           gridEl,
-          paginationEl,
+          paginationEl: paginationEls,
           lightboxEl,
           onPageChange: (p) => {
             likesPage = p;
@@ -161,8 +263,9 @@ export function initLikesPanel() {
     const { pageItems } = renderLikes({
       likes: likesCache,
       query: searchInput?.value || '',
-      mediaOnly,
+      filter: likesFilter,
       thumbCache,
+      overlayTweetIds,
       page: likesPage,
       gridEl: null,
       paginationEl: null,
@@ -181,15 +284,23 @@ export function initLikesPanel() {
     resolveNextBatch();
   }
 
-  async function handleHide(tweetId) {
-    await hideLike(tweetId);
+  async function handleDelete(tweetId) {
+    await deleteLike(tweetId);
+    selectedLikes.delete(tweetId);
+    delete thumbCache[tweetId];
     await reloadFromDb();
     renderCurrent();
   }
 
-  async function handleDelete(tweetId) {
-    await deleteLike(tweetId);
-    delete thumbCache[tweetId];
+  async function handleBulkDelete() {
+    const ids = [...selectedLikes];
+    if (!ids.length) return;
+    if (!confirm(`Remove ${ids.length} like${ids.length === 1 ? '' : 's'} from your library?`)) return;
+    await deleteLikes(ids);
+    for (const id of ids) {
+      selectedLikes.delete(id);
+      delete thumbCache[id];
+    }
     await reloadFromDb();
     renderCurrent();
   }
@@ -197,31 +308,78 @@ export function initLikesPanel() {
   async function handleImportFile(file) {
     if (!file) return;
     const text = await file.text();
-    const entries = parseLikeArchive(text);
-    const merge = mergeEl?.checked ?? false;
-    if (!merge && likesCache?.length) {
-      if (!confirm('Replace all likes in library with this file? Hidden items will be lost unless you choose Merge.')) {
+    let parsedJson = null;
+    if (file.name.toLowerCase().endsWith('.json')) {
+      try {
+        parsedJson = JSON.parse(text);
+      } catch {
+        if (statusEl) statusEl.textContent = 'Invalid JSON file.';
         return;
       }
     }
+
+    const entries = parseLikeImport(text, file.name);
+    if (!entries.length) {
+      if (statusEl) statusEl.textContent = 'No likes found in file.';
+      return;
+    }
+
+    const isSync =
+      isSyncExportFormat(parsedJson) || file.name.toLowerCase().includes('sync');
+    const merge = isSync ? true : (mergeEl?.checked ?? false);
+
+    if (!merge && likesCache?.length) {
+      if (!confirm('Replace all likes in library with this file?')) {
+        return;
+      }
+    }
+
     if (statusEl) statusEl.textContent = 'Importing…';
-    const { total } = await importLikes(entries, { sourceName: file.name, replace: !merge });
+    const { imported, skipped, total } = await importLikes(entries, {
+      sourceName: file.name,
+      replace: !merge,
+      prepend: merge,
+    });
     await reloadFromDb();
     likesPage = 1;
     panelLoaded = true;
     renderCurrent();
     queueResolveForPage();
-    if (statusEl) statusEl.textContent = `Imported ${total} likes from ${file.name}`;
+
+    if (statusEl) {
+      if (merge) {
+        statusEl.textContent = `Added ${imported} new likes (${skipped} already in library) · ${total} total`;
+      } else {
+        statusEl.textContent = `Imported ${total} likes from ${file.name}`;
+      }
+    }
+  }
+
+  async function handleExportSync() {
+    const data = await exportLikesLibrary();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `deepoverlay_likes_sync_${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    if (statusEl && data.newest) {
+      statusEl.textContent = `Exported ${data.count} likes · newest: ${data.newest.tweetId}`;
+    }
   }
 
   function showEmptyImportState() {
     updateImportUi(false);
     if (statusEl) statusEl.textContent = 'Import your X archive like.js once — then manage likes here without the file.';
     gridEl.innerHTML = `<div class="empty-state">No likes in library yet. Click <strong>Import like.js</strong> above.</div>`;
-    if (paginationEl) {
-      paginationEl.innerHTML = '';
-      paginationEl.hidden = true;
+    for (const el of paginationEls) {
+      if (!el) continue;
+      el.innerHTML = '';
+      el.hidden = true;
     }
+    if (bulkBar) bulkBar.hidden = true;
+    selectedLikes.clear();
     updateNavCount(0);
   }
 
@@ -247,19 +405,26 @@ export function initLikesPanel() {
 
   importBtn?.addEventListener('click', () => fileInput?.click());
   reimportBtn?.addEventListener('click', () => fileInput?.click());
+  exportSyncBtn?.addEventListener('click', () => handleExportSync().catch((err) => {
+    if (statusEl) statusEl.textContent = err?.message || 'Export failed.';
+  }));
   bundledBtn?.addEventListener('click', async () => {
     try {
       const url = chrome.runtime.getURL('data/like.js');
       const res = await fetch(url);
       if (!res.ok) throw new Error('data/like.js not found in extension — use file import.');
       const text = await res.text();
-      const entries = parseLikeArchive(text);
+      const entries = parseLikeImport(text, 'data/like.js');
       const merge = mergeEl?.checked ?? false;
       if (!merge && likesCache?.length) {
         if (!confirm('Replace all likes in library with bundled data/like.js?')) return;
       }
       if (statusEl) statusEl.textContent = 'Importing bundled like.js…';
-      const { total } = await importLikes(entries, { sourceName: 'data/like.js', replace: !merge });
+      const { imported, skipped, total } = await importLikes(entries, {
+        sourceName: 'data/like.js',
+        replace: !merge,
+        prepend: merge,
+      });
       await reloadFromDb();
       likesPage = 1;
       panelLoaded = true;
@@ -284,13 +449,25 @@ export function initLikesPanel() {
     });
   }
 
-  if (mediaOnlyEl) {
-    mediaOnlyEl.addEventListener('change', () => {
-      mediaOnly = mediaOnlyEl.checked;
+  if (filterEl) {
+    filterEl.addEventListener('change', () => {
+      likesFilter = filterEl.value || 'all';
       likesPage = 1;
       renderCurrent();
     });
   }
+
+  subscribeOverlayChanges(async () => {
+    await reloadOverlayLinks();
+    renderCurrent();
+  });
+
+  let likesResizeTimer;
+  window.addEventListener('resize', () => {
+    if (!panelLoaded || !likesCache?.length) return;
+    clearTimeout(likesResizeTimer);
+    likesResizeTimer = setTimeout(() => renderCurrent(), 150);
+  });
 
   return () => {
     if (!panelLoaded) loadLikes();

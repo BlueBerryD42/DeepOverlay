@@ -2,10 +2,12 @@
 
 import { renderDashboard, LIBRARY_PAGE_SIZE } from './utils/render.js';
 import { getAllData, getStorageBytes, removeStorageKey, clearAllStorage } from './utils/storage.js';
+import { subscribeOverlayChanges } from '../../lib/storage-broadcast.mjs';
 import { formatBytes } from './utils/helpers.js';
 import { createBulkActionsBar, updateBulkActionsBar } from './components/BulkActions.js';
 import { filterAndGroupData } from './utils/filters.js';
 import { initLikesPanel } from './likesPanel.js';
+import { initPaginationKeyboard, syncPaginationKeyboard } from './utils/paginationKeyboard.js';
 
 const listContainer = document.getElementById('dashboard-list');
 const searchInput = document.getElementById('search-input');
@@ -66,6 +68,7 @@ function syncManifestVersion() {
 // --- Init ---
 document.addEventListener('DOMContentLoaded', () => {
     syncManifestVersion();
+    initPaginationKeyboard();
     const showLikesPanel = initLikesPanel();
     initNav((panelId) => {
         if (panelId === 'likes') showLikesPanel?.();
@@ -93,6 +96,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('export-btn').onclick = exportData;
     document.getElementById('clear-btn').onclick = clearAllData;
     document.getElementById('theme-toggle').onclick = toggleTheme;
+
+    subscribeOverlayChanges(() => loadDashboard());
 
     window.inspectStorage = () => {
         chrome.storage.local.get(null, (items) => {
@@ -174,6 +179,15 @@ function renderLibrary() {
         }
     });
     if (r) libraryPage = r.currentPage;
+    syncPaginationKeyboard({
+        panelId: 'library',
+        page: libraryPage,
+        totalPages: r?.totalPages ?? 1,
+        onPageChange: (p) => {
+            libraryPage = p;
+            renderLibrary();
+        },
+    });
 }
 
 function updateLibraryNavCount(data) {

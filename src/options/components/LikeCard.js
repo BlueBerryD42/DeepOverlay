@@ -3,12 +3,15 @@
 /**
  * @param {{ tweetId: string; text: string; postUrl: string }} like
  * @param {{ mediaUrl?: string; mediaUrls?: string[]; mediaType?: string }} [thumb]
- * @param {{ onOpenLightbox?: (urls: string[], index: number) => void; onHide?: (tweetId: string) => void; onDelete?: (tweetId: string) => void }} [opts]
+ * @param {{ onOpenLightbox?: (urls: string[], index: number) => void; onDelete?: (tweetId: string) => void; hasOverlay?: boolean; selectedTweetIds?: Set<string>; onSelectToggle?: (tweetId: string, selected: boolean) => void }} [opts]
  */
 export function createLikeCard(like, thumb, opts = {}) {
   const card = document.createElement('article');
   card.className = 'do-like-card';
+  if (opts.hasOverlay) card.classList.add('do-like-card--has-overlay');
+  if (opts.selectedTweetIds?.has(like.tweetId)) card.classList.add('do-like-card--selected');
   card.dataset.tweetId = like.tweetId;
+  if (opts.hasOverlay) card.dataset.hasOverlay = 'true';
 
   const mediaUrl = thumb?.mediaUrl;
   const mediaUrls = thumb?.mediaUrls?.length ? thumb.mediaUrls : mediaUrl ? [mediaUrl] : [];
@@ -61,6 +64,34 @@ export function createLikeCard(like, thumb, opts = {}) {
     thumbEl.appendChild(count);
   }
 
+  if (opts.hasOverlay) {
+    const overlayBadge = document.createElement('span');
+    overlayBadge.className = 'do-like-badge do-like-badge--overlay';
+    overlayBadge.textContent = '⊞';
+    overlayBadge.title = 'Has DeepOverlay annotation';
+    overlayBadge.setAttribute('aria-label', 'Has overlay annotation');
+    thumbEl.appendChild(overlayBadge);
+  }
+
+  if (opts.onSelectToggle) {
+    const selectWrap = document.createElement('label');
+    selectWrap.className = 'do-like-select';
+    selectWrap.title = 'Select for bulk delete';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'do-like-select-cb';
+    cb.checked = opts.selectedTweetIds?.has(like.tweetId) ?? false;
+    cb.setAttribute('aria-label', 'Select like');
+    cb.addEventListener('click', (e) => e.stopPropagation());
+    cb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      opts.onSelectToggle(like.tweetId, cb.checked);
+      card.classList.toggle('do-like-card--selected', cb.checked);
+    });
+    selectWrap.appendChild(cb);
+    thumbEl.appendChild(selectWrap);
+  }
+
   const caption = document.createElement('p');
   caption.className = 'do-like-caption';
   caption.textContent = like.text || '(no text)';
@@ -76,19 +107,6 @@ export function createLikeCard(like, thumb, opts = {}) {
 
   const actions = document.createElement('div');
   actions.className = 'do-like-actions';
-
-  if (opts.onHide) {
-    const hideBtn = document.createElement('button');
-    hideBtn.type = 'button';
-    hideBtn.className = 'do-btn do-like-action-btn';
-    hideBtn.textContent = 'Hide';
-    hideBtn.title = 'Hide from gallery (keeps in database)';
-    hideBtn.onclick = (e) => {
-      e.stopPropagation();
-      opts.onHide(like.tweetId);
-    };
-    actions.appendChild(hideBtn);
-  }
 
   if (opts.onDelete) {
     const delBtn = document.createElement('button');

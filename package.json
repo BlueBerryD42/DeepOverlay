@@ -15,9 +15,10 @@
     },
     "scripts": {
         "build:adapters": "esbuild lib/site-adapters.mjs --bundle --format=iife --global-name=DeepOverlayAdapters --outfile=adapters.js",
+        "build:storage": "esbuild lib/storage-client.mjs --bundle --format=iife --global-name=DeepOverlayStorage --outfile=storage-client.js",
         "build:options": "vite build && node scripts/copy-extension-ui.js",
         "dev:options": "vite build --watch",
-        "build:all": "npm run build:adapters && npm run build:options"
+        "build:all": "npm run build:adapters && npm run build:storage && npm run build:options"
     },
     "dependencies": {},
     "devDependencies": {

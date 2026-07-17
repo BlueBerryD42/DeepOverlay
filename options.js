@@ -129,20 +129,208 @@ function getExpandedState(key) {
 function setExpandedState(key, expanded) {
   localStorage.setItem(`expanded_${key}`, expanded.toString());
 }
-const INDEX_KEY = "_index";
-const SCHEMA_VERSION_KEY = "_schemaVersion";
+const INDEX_KEY$1 = "_index";
+const SCHEMA_VERSION_KEY$1 = "_schemaVersion";
 function isDashboardMetaKey(storageKey) {
   if (!storageKey || typeof storageKey !== "string") return true;
   if (storageKey.startsWith("work:")) return false;
-  if (storageKey === INDEX_KEY || storageKey === SCHEMA_VERSION_KEY) return true;
+  if (storageKey === INDEX_KEY$1 || storageKey === SCHEMA_VERSION_KEY$1) return true;
   if (storageKey === "theme" || storageKey === "settings") return true;
   if (storageKey.startsWith("overlay_")) return true;
+  if (storageKey.startsWith("workimg:")) return true;
+  if (storageKey === "likes:thumbCache") return true;
   return false;
 }
-function removeIndexKey(index, storageKey) {
-  return (index || []).filter((e) => e.key !== storageKey);
+const INDEX_KEY = "_index";
+const SCHEMA_VERSION_KEY = "_schemaVersion";
+const CURRENT_SCHEMA_VERSION = 4;
+function djb2Hex(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = (h << 5) + h + str.charCodeAt(i);
+  return (h >>> 0).toString(16);
 }
-function upsertIndexRow(index, storageKey, workEntry) {
+function makeWorkImgKey(storageKey, imageKey) {
+  const parts = String(storageKey || "").split(":");
+  const site = parts[1] || "generic";
+  const workId = parts.slice(2).join(":") || "";
+  return `workimg:${site}:${workId}:${djb2Hex(String(imageKey || ""))}`;
+}
+const EHentai = {
+  name: "e-hentai",
+  match: (url) => {
+    try {
+      const u = new URL(url);
+      if (!/e-hentai\.org|exhentai\.org/i.test(u.hostname)) return false;
+      return /\/s\/[^/]+\/\d+-\d+/.test(u.pathname);
+    } catch {
+      return false;
+    }
+  },
+  extract: (url) => {
+    const u = new URL(url);
+    const m = u.pathname.match(/\/s\/[^/]+\/(\d+)-\d+/);
+    if (!m) return null;
+    const basePath = u.pathname.split("-")[0];
+    return {
+      site: "e-hentai",
+      workId: m[1],
+      normalizedUrl: u.origin + basePath
+    };
+  },
+  storageKey: (url) => {
+    const e = EHentai.extract(url);
+    return e ? `work:${e.site}:${e.workId}` : null;
+  }
+};
+const Pixiv = {
+  name: "pixiv",
+  match: (url) => {
+    try {
+      const u = new URL(url);
+      return u.hostname.includes("pixiv.net") && /\/artworks\/\d+/.test(u.pathname);
+    } catch {
+      return false;
+    }
+  },
+  extract: (url) => {
+    const u = new URL(url);
+    const m = u.pathname.match(/\/artworks\/(\d+)/);
+    if (!m) return null;
+    return {
+      site: "pixiv",
+      workId: m[1],
+      normalizedUrl: u.origin + u.pathname.split("#")[0]
+    };
+  },
+  storageKey: (url) => {
+    const e = Pixiv.extract(url);
+    return e ? `work:${e.site}:${e.workId}` : null;
+  }
+};
+const Twitter = {
+  name: "x",
+  match: (url) => {
+    try {
+      const u = new URL(url);
+      return (u.hostname.includes("x.com") || u.hostname.includes("twitter.com")) && /\/status\/\d+/.test(u.pathname);
+    } catch {
+      return false;
+    }
+  },
+  extract: (url) => {
+    const u = new URL(url);
+    const m = u.pathname.match(/\/status\/(\d+)/);
+    if (!m) return null;
+    const base = u.pathname.split("/photo/")[0];
+    return {
+      site: "x",
+      workId: m[1],
+      normalizedUrl: u.origin + base
+    };
+  },
+  storageKey: (url) => {
+    const e = Twitter.extract(url);
+    return e ? `work:${e.site}:${e.workId}` : null;
+  }
+};
+const Generic = {
+  name: "generic",
+  match: () => true,
+  extract: (url) => {
+    try {
+      const u = new URL(url);
+      const normalizedUrl = u.origin + u.pathname;
+      return {
+        site: "generic",
+        workId: djb2Hex(normalizedUrl),
+        normalizedUrl
+      };
+    } catch {
+      const normalizedUrl = String(url).split("?")[0].split("#")[0];
+      return {
+        site: "generic",
+        workId: djb2Hex(normalizedUrl),
+        normalizedUrl
+      };
+    }
+  },
+  storageKey: (url) => {
+    const e = Generic.extract(url);
+    return `work:${e.site}:${e.workId}`;
+  }
+};
+const adapters = [EHentai, Pixiv, Twitter, Generic];
+function getAdapter(url) {
+  for (let i = 0; i < adapters.length - 1; i++) {
+    if (adapters[i].match(url)) return adapters[i];
+  }
+  return Generic;
+}
+function extractWorkMeta(url) {
+  return getAdapter(url).extract(url);
+}
+function getStorageKey(url) {
+  return getAdapter(url).storageKey(url);
+}
+const IMAGE_ENTRY_SEP = "";
+function makeImageStorageKey(pageUrl, cssSelector) {
+  return pageUrl + IMAGE_ENTRY_SEP + cssSelector;
+}
+function parseImageStorageKey(key) {
+  const i = key.indexOf(IMAGE_ENTRY_SEP);
+  if (i === -1) {
+    return { pageUrl: null, cssSelector: key, legacy: true };
+  }
+  return {
+    pageUrl: key.slice(0, i),
+    cssSelector: key.slice(i + IMAGE_ENTRY_SEP.length),
+    legacy: false
+  };
+}
+function migrateImageKeysInWorkEntry(workEntry) {
+  if (!workEntry?.images || typeof workEntry.images !== "object") return false;
+  const images = workEntry.images;
+  const keys = Object.keys(images);
+  let changed = false;
+  const next = { ...images };
+  for (const key of keys) {
+    if (key.indexOf(IMAGE_ENTRY_SEP) !== -1) continue;
+    const data = images[key];
+    if (!data || typeof data !== "object" || !data.pageUrl) continue;
+    const nk = makeImageStorageKey(data.pageUrl, key);
+    if (nk === key) continue;
+    if (next[nk] !== void 0) {
+      delete next[key];
+      changed = true;
+      continue;
+    }
+    next[nk] = data;
+    delete next[key];
+    changed = true;
+  }
+  if (changed) workEntry.images = next;
+  return changed;
+}
+function isWorkKey(key) {
+  return typeof key === "string" && key.startsWith("work:");
+}
+function isReservedKey(key) {
+  if (typeof key !== "string") return true;
+  if (key === INDEX_KEY || key === SCHEMA_VERSION_KEY) return true;
+  if (key === "theme" || key === "ocr_quota") return true;
+  if (key.startsWith("overlay_")) return true;
+  if (key === "settings") return true;
+  return false;
+}
+function legacySiteWorkKeyToNew(key) {
+  if (key.startsWith("work:")) return key;
+  const parts = key.split(":");
+  if (parts.length === 2 && parts[0] !== "http" && parts[0] !== "https" && !key.includes("/")) {
+    return `work:${parts[0]}:${parts[1]}`;
+  }
+  return null;
+}
+function upsertIndexEntry(index, storageKey, workEntry) {
   const row = {
     key: storageKey,
     site: workEntry.site || "generic",
@@ -150,78 +338,502 @@ function upsertIndexRow(index, storageKey, workEntry) {
     lastUpdated: workEntry.metadata?.lastUpdated || Date.now(),
     baseUrl: workEntry.baseUrl || ""
   };
-  const list = Array.isArray(index) ? [...index] : [];
-  const i = list.findIndex((e) => e.key === storageKey);
-  if (i >= 0) list[i] = row;
-  else list.push(row);
-  list.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
-  return list;
+  const i = index.findIndex((e) => e.key === storageKey);
+  if (i >= 0) index[i] = row;
+  else index.push(row);
+  index.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
 }
-function getAllData() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(null, (items) => {
-      resolve(items);
-    });
+function migrateStorageSnapshot(all) {
+  const set = {};
+  const remove = [];
+  const ver = all[SCHEMA_VERSION_KEY];
+  if (ver >= CURRENT_SCHEMA_VERSION) {
+    return { set, remove };
+  }
+  const index = Array.isArray(all[INDEX_KEY]) ? [...all[INDEX_KEY]] : [];
+  const processedWorkKeys = /* @__PURE__ */ new Set();
+  for (const key of Object.keys(all)) {
+    if (key === SCHEMA_VERSION_KEY || key === INDEX_KEY) continue;
+    if (key === "ocr_quota") continue;
+    if (isReservedKey(key) && !isWorkKey(key)) continue;
+    const val = all[key];
+    if (Array.isArray(val)) {
+      const newKey = getStorageKey(key);
+      if (processedWorkKeys.has(newKey)) continue;
+      const meta = extractWorkMeta(key);
+      const ts = Date.now();
+      const workEntry = {
+        workId: meta.workId,
+        site: meta.site,
+        baseUrl: meta.normalizedUrl,
+        images: {},
+        legacyFlatBoxes: val,
+        metadata: {
+          firstSeen: ts,
+          lastUpdated: ts,
+          urlVariants: [key]
+        }
+      };
+      set[newKey] = workEntry;
+      upsertIndexEntry(index, newKey, workEntry);
+      processedWorkKeys.add(newKey);
+      if (key !== newKey) remove.push(key);
+      continue;
+    }
+    if (val && typeof val === "object" && "images" in val) {
+      let newKey = key;
+      if (!key.startsWith("work:")) {
+        const tryK = legacySiteWorkKeyToNew(key);
+        if (tryK) newKey = tryK;
+        else if (/^https?:\/\//i.test(key)) newKey = getStorageKey(key);
+        else continue;
+      }
+      if (processedWorkKeys.has(newKey)) continue;
+      const we = { ...val };
+      normalizeWorkEntryFields(we, newKey);
+      migrateImageKeysInWorkEntry(we);
+      if (we.images && typeof we.images === "object") {
+        const nextImages = { ...we.images };
+        for (const imageKey of Object.keys(nextImages)) {
+          const img = nextImages[imageKey];
+          if (!img || typeof img !== "object") continue;
+          if (img.refKey) continue;
+          if (!Array.isArray(img.boxes)) continue;
+          const refKey = makeWorkImgKey(newKey, imageKey);
+          set[refKey] = {
+            pageUrl: img.pageUrl || null,
+            selector: img.selector || parseImageStorageKey(imageKey).cssSelector,
+            src: img.src || "",
+            boxes: img.boxes || []
+          };
+          const allNotes = (img.boxes || []).map((b) => (b?.note || "").trim()).filter(Boolean).join("\n");
+          const notePreview = allNotes.length > 180 ? `${allNotes.slice(0, 180)}…` : allNotes;
+          nextImages[imageKey] = {
+            refKey,
+            pageUrl: img.pageUrl || null,
+            selector: img.selector || parseImageStorageKey(imageKey).cssSelector,
+            src: img.src || "",
+            boxCount: (img.boxes || []).length,
+            notePreview
+          };
+        }
+        we.images = nextImages;
+      }
+      upsertIndexEntry(index, newKey, we);
+      processedWorkKeys.add(newKey);
+      set[newKey] = we;
+      if (newKey !== key) remove.push(key);
+    }
+  }
+  set[INDEX_KEY] = index;
+  set[SCHEMA_VERSION_KEY] = CURRENT_SCHEMA_VERSION;
+  return { set, remove };
+}
+function normalizeWorkEntryFields(workEntry, storageKey) {
+  const parts = storageKey.split(":");
+  if (parts[0] === "work" && parts.length >= 3) {
+    workEntry.site = parts[1];
+    workEntry.workId = parts.slice(2).join(":");
+  }
+  if (!workEntry.metadata) {
+    workEntry.metadata = { firstSeen: Date.now(), lastUpdated: Date.now(), urlVariants: [] };
+  }
+}
+function rebuildIndexFromWorks(all) {
+  const index = [];
+  for (const key of Object.keys(all)) {
+    if (!isWorkKey(key)) continue;
+    const val = all[key];
+    if (val && typeof val === "object" && val.images) {
+      upsertIndexEntry(index, key, val);
+    }
+  }
+  return index;
+}
+const DB_NAME = "deepoverlay";
+const DB_VERSION = 2;
+const STORES = {
+  LIKES_META: "likes_meta",
+  LIKES: "likes",
+  LIKE_THUMBS: "like_thumbs",
+  WORKS: "works",
+  WORK_IMAGES: "work_images",
+  APP_META: "app_meta"
+};
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
+    req.onsuccess = () => resolve(req.result);
+    req.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORES.LIKES_META)) {
+        db.createObjectStore(STORES.LIKES_META, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(STORES.LIKES)) {
+        const likes = db.createObjectStore(STORES.LIKES, { keyPath: "tweetId" });
+        likes.createIndex("sortOrder", "sortOrder", { unique: false });
+        likes.createIndex("hidden", "hidden", { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORES.LIKE_THUMBS)) {
+        db.createObjectStore(STORES.LIKE_THUMBS, { keyPath: "tweetId" });
+      }
+      if (!db.objectStoreNames.contains(STORES.WORKS)) {
+        const works = db.createObjectStore(STORES.WORKS, { keyPath: "storageKey" });
+        works.createIndex("site", "site", { unique: false });
+        works.createIndex("lastUpdated", "lastUpdated", { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORES.WORK_IMAGES)) {
+        const imgs = db.createObjectStore(STORES.WORK_IMAGES, { keyPath: "refKey" });
+        imgs.createIndex("storageKey", "storageKey", { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORES.APP_META)) {
+        db.createObjectStore(STORES.APP_META, { keyPath: "id" });
+      }
+    };
   });
 }
-function getStorageBytes() {
-  return new Promise((resolve) => {
-    chrome.storage.local.getBytesInUse(null, (bytes) => {
-      resolve(bytes);
-    });
+function store(db, storeName, mode = "readonly") {
+  return db.transaction(storeName, mode).objectStore(storeName);
+}
+function getOne(os, key) {
+  return new Promise((resolve, reject) => {
+    const req = os.get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
   });
 }
-function removeStorageKey(key) {
-  return new Promise((resolve) => {
-    chrome.storage.local.get([INDEX_KEY], (r) => {
-      const index = removeIndexKey(r[INDEX_KEY], key);
-      chrome.storage.local.remove([key], () => {
-        chrome.storage.local.set({ [INDEX_KEY]: index }, () => resolve());
-      });
+function getAll(os) {
+  return new Promise((resolve, reject) => {
+    const req = os.getAll();
+    req.onsuccess = () => resolve(req.result ?? []);
+    req.onerror = () => reject(req.error);
+  });
+}
+function putOne(os, value) {
+  return new Promise((resolve, reject) => {
+    const req = os.put(value);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+function putMany(os, values) {
+  if (!values.length) return Promise.resolve();
+  return Promise.all(values.map((value) => putOne(os, value)));
+}
+function deleteMany(os, keys) {
+  if (!keys.length) return Promise.resolve();
+  return Promise.all(keys.map((key) => deleteOne(os, key)));
+}
+function deleteOne(os, key) {
+  return new Promise((resolve, reject) => {
+    const req = os.delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+function clearStore(os) {
+  return new Promise((resolve, reject) => {
+    const req = os.clear();
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+const OVERLAY_BC = "deepoverlay-overlay-storage";
+function broadcastOverlayChange(keys) {
+  try {
+    const ch = new BroadcastChannel(OVERLAY_BC);
+    ch.postMessage({ type: "overlay-updated", keys: keys || [] });
+    ch.close();
+  } catch {
+  }
+}
+function subscribeOverlayChanges(handler) {
+  try {
+    const ch = new BroadcastChannel(OVERLAY_BC);
+    ch.onmessage = (e) => {
+      if (e.data?.type === "overlay-updated") handler(e.data);
+    };
+    return () => ch.close();
+  } catch {
+    return () => {
+    };
+  }
+}
+const X_WORK_PREFIX = "work:x:";
+function tweetIdFromXWorkKey(storageKey) {
+  if (!storageKey?.startsWith(X_WORK_PREFIX)) return null;
+  const id = storageKey.slice(X_WORK_PREFIX.length);
+  return id || null;
+}
+function countBoxesInWorkEntry(workEntry) {
+  if (!workEntry || typeof workEntry !== "object") return 0;
+  if (Array.isArray(workEntry.legacyFlatBoxes)) {
+    return workEntry.legacyFlatBoxes.length;
+  }
+  let total = 0;
+  for (const img of Object.values(workEntry.images || {})) {
+    if (!img || typeof img !== "object") continue;
+    total += img.boxCount ?? (Array.isArray(img.boxes) ? img.boxes.length : 0);
+  }
+  return total;
+}
+const META_OVERLAY_MIGRATED = "overlay_migrated";
+const META_WORKS_INDEX = "works_index";
+let dbPromise$1 = null;
+let migratePromise = null;
+function getOverlayDb() {
+  if (!dbPromise$1) dbPromise$1 = openDb();
+  return dbPromise$1;
+}
+function workRow(storageKey, workEntry) {
+  const lastUpdated = workEntry?.metadata?.lastUpdated || Date.now();
+  return {
+    ...workEntry,
+    storageKey,
+    site: workEntry?.site || "generic",
+    workId: workEntry?.workId != null ? String(workEntry.workId) : "",
+    lastUpdated
+  };
+}
+function rowToWorkEntry(row) {
+  if (!row) return null;
+  const { storageKey, site, workId, lastUpdated, ...rest } = row;
+  return {
+    ...rest,
+    site: site ?? rest.site,
+    workId: workId ?? rest.workId
+  };
+}
+async function getWorksIndex() {
+  const db = await getOverlayDb();
+  const row = await getOne(store(db, STORES.APP_META), META_WORKS_INDEX);
+  return Array.isArray(row?.rows) ? row.rows : [];
+}
+async function setWorksIndex(rows) {
+  const db = await getOverlayDb();
+  await putOne(store(db, STORES.APP_META, "readwrite"), {
+    id: META_WORKS_INDEX,
+    rows
+  });
+}
+async function ensureOverlayMigrated() {
+  if (migratePromise) return migratePromise;
+  migratePromise = (async () => {
+    const db = await getOverlayDb();
+    const flag = await getOne(store(db, STORES.APP_META), META_OVERLAY_MIGRATED);
+    if (flag?.done) return;
+    const all = await new Promise((resolve) => {
+      chrome.storage?.local?.get(null, (items) => resolve(items || {}));
     });
+    const { set, remove } = migrateStorageSnapshot(all);
+    const merged = { ...all, ...set };
+    for (const k of remove) delete merged[k];
+    const workRows = [];
+    const imgRows = [];
+    for (const key of Object.keys(merged)) {
+      const val = merged[key];
+      if (key.startsWith("work:") && val && typeof val === "object" && !Array.isArray(val)) {
+        workRows.push(workRow(key, val));
+      }
+      if (key.startsWith("workimg:") && val && typeof val === "object") {
+        const parts = key.split(":");
+        const storageKey = parts.length >= 3 ? `work:${parts[1]}:${parts[2]}` : "";
+        imgRows.push({ refKey: key, storageKey, ...val });
+      }
+    }
+    if (workRows.length) {
+      await putMany(store(db, STORES.WORKS, "readwrite"), workRows);
+    }
+    if (imgRows.length) {
+      await putMany(store(db, STORES.WORK_IMAGES, "readwrite"), imgRows);
+    }
+    let index = Array.isArray(merged[INDEX_KEY]) ? merged[INDEX_KEY] : [];
+    if (!index.length) {
+      const snapshot = {};
+      const works = await getAll(store(db, STORES.WORKS));
+      for (const w of works) snapshot[w.storageKey] = rowToWorkEntry(w);
+      index = rebuildIndexFromWorks(snapshot);
+    }
+    await setWorksIndex(index);
+    await putOne(store(db, STORES.APP_META, "readwrite"), {
+      id: META_OVERLAY_MIGRATED,
+      done: true,
+      migratedAt: Date.now()
+    });
+    const keysToRemove = Object.keys(all).filter(
+      (k) => k.startsWith("work:") || k.startsWith("workimg:") || k === INDEX_KEY || k === SCHEMA_VERSION_KEY
+    );
+    if (keysToRemove.length && chrome.storage?.local?.remove) {
+      await new Promise((resolve) => chrome.storage.local.remove(keysToRemove, resolve));
+    }
+  })();
+  return migratePromise;
+}
+async function getWorkImagesMap(refKeys) {
+  await ensureOverlayMigrated();
+  const db = await getOverlayDb();
+  const os = store(db, STORES.WORK_IMAGES);
+  const map = {};
+  await Promise.all(
+    refKeys.filter(Boolean).map(async (refKey) => {
+      const row = await getOne(os, refKey);
+      if (row) {
+        const { refKey: _r, storageKey: _s, ...rec } = row;
+        map[refKey] = rec;
+      }
+    })
+  );
+  return map;
+}
+async function getWorkImage(refKey) {
+  const map = await getWorkImagesMap([refKey]);
+  return map[refKey] || null;
+}
+async function saveWorkWithIndex(storageKey, workEntry) {
+  const index = await getWorksIndex();
+  upsertIndexEntry(index, storageKey, workEntry);
+  await setWorksIndex(index);
+  const db = await getOverlayDb();
+  await putOne(store(db, STORES.WORKS, "readwrite"), workRow(storageKey, workEntry));
+  broadcastOverlayChange([storageKey]);
+}
+async function saveWorkImage(refKey, record, storageKey = "") {
+  await ensureOverlayMigrated();
+  const db = await getOverlayDb();
+  const sk = storageKey || (refKey.startsWith("workimg:") ? (() => {
+    const parts = refKey.split(":");
+    return parts.length >= 3 ? `work:${parts[1]}:${parts[2]}` : "";
+  })() : "");
+  await putOne(store(db, STORES.WORK_IMAGES, "readwrite"), { refKey, storageKey: sk, ...record });
+  broadcastOverlayChange([refKey, sk]);
+}
+async function getWorksSnapshot() {
+  await ensureOverlayMigrated();
+  const db = await getOverlayDb();
+  const works = await getAll(store(db, STORES.WORKS));
+  const index = await getWorksIndex();
+  const out = { [INDEX_KEY]: index };
+  for (const row of works) {
+    out[row.storageKey] = rowToWorkEntry(row);
+  }
+  return out;
+}
+async function getAnnotatedXTweetIds() {
+  await ensureOverlayMigrated();
+  const db = await getOverlayDb();
+  const works = await getAll(store(db, STORES.WORKS));
+  const ids = /* @__PURE__ */ new Set();
+  for (const row of works) {
+    const storageKey = row.storageKey;
+    const tweetId = tweetIdFromXWorkKey(storageKey) || (row.site === "x" ? row.workId : null);
+    if (!tweetId) continue;
+    const entry = rowToWorkEntry(row);
+    if (countBoxesInWorkEntry(entry) > 0) {
+      ids.add(String(tweetId));
+    }
+  }
+  return ids;
+}
+async function deleteWork(storageKey) {
+  await ensureOverlayMigrated();
+  const db = await getOverlayDb();
+  const imgs = await getAll(store(db, STORES.WORK_IMAGES));
+  const refKeys = imgs.filter((img) => img.storageKey === storageKey).map((img) => img.refKey);
+  if (refKeys.length) {
+    await deleteMany(store(db, STORES.WORK_IMAGES, "readwrite"), refKeys);
+  }
+  await deleteOne(store(db, STORES.WORKS, "readwrite"), storageKey);
+  const index = (await getWorksIndex()).filter((e) => e.key !== storageKey);
+  await setWorksIndex(index);
+  broadcastOverlayChange([storageKey]);
+}
+async function deleteWorkImages(refKeys) {
+  await ensureOverlayMigrated();
+  const db = await getOverlayDb();
+  const keys = refKeys.filter(Boolean);
+  if (keys.length) {
+    await deleteMany(store(db, STORES.WORK_IMAGES, "readwrite"), keys);
+  }
+  broadcastOverlayChange(refKeys);
+}
+async function clearOverlayData() {
+  const db = await getOverlayDb();
+  await clearStore(store(db, STORES.WORKS, "readwrite"));
+  await clearStore(store(db, STORES.WORK_IMAGES, "readwrite"));
+  await deleteOne(store(db, STORES.APP_META, "readwrite"), META_WORKS_INDEX);
+  await putOne(store(db, STORES.APP_META, "readwrite"), {
+    id: META_OVERLAY_MIGRATED,
+    done: true,
+    migratedAt: Date.now()
+  });
+  broadcastOverlayChange(["*"]);
+}
+async function estimateOverlayBytes() {
+  const snap = await getWorksSnapshot();
+  return JSON.stringify(snap).length;
+}
+async function getAllData() {
+  await ensureOverlayMigrated();
+  const overlay = await getWorksSnapshot();
+  const settings = await new Promise((resolve) => {
+    chrome.storage.local.get(null, (items) => resolve(items || {}));
+  });
+  const merged = { ...settings };
+  for (const [k, v] of Object.entries(overlay)) {
+    merged[k] = v;
+  }
+  return merged;
+}
+async function getStorageBytes() {
+  const [chromeBytes, overlayBytes] = await Promise.all([
+    new Promise((resolve) => {
+      chrome.storage.local.getBytesInUse(null, (bytes) => resolve(bytes || 0));
+    }),
+    estimateOverlayBytes()
+  ]);
+  return chromeBytes + overlayBytes;
+}
+async function removeStorageKey(key) {
+  if (key.startsWith("work:")) {
+    await deleteWork(key);
+    return;
+  }
+  return new Promise((resolve) => {
+    chrome.storage.local.remove([key], () => resolve());
   });
 }
 function removeStorageKeys(keys) {
-  return new Promise((resolve) => {
-    chrome.storage.local.remove(keys, () => {
-      resolve();
-    });
-  });
+  const workKeys = keys.filter((k) => k.startsWith("work:"));
+  const imgKeys = keys.filter((k) => k.startsWith("workimg:"));
+  const other = keys.filter((k) => !k.startsWith("work:") && !k.startsWith("workimg:"));
+  const tasks = [];
+  if (imgKeys.length) tasks.push(deleteWorkImages(imgKeys));
+  if (workKeys.length) tasks.push(Promise.all(workKeys.map((k) => deleteWork(k))));
+  if (other.length) {
+    tasks.push(
+      new Promise((resolve) => {
+        chrome.storage.local.remove(other, () => resolve());
+      })
+    );
+  }
+  return Promise.all(tasks);
 }
 function getWorkImgRecord(refKey) {
-  return new Promise((resolve) => {
-    if (!refKey) return resolve(null);
-    chrome.storage.local.get([refKey], (r) => {
-      resolve(r ? r[refKey] : null);
-    });
-  });
+  if (!refKey) return Promise.resolve(null);
+  return getWorkImage(refKey);
 }
 function saveWorkImgRecord(refKey, record) {
-  return new Promise((resolve) => {
-    if (!refKey) return resolve();
-    chrome.storage.local.set({ [refKey]: record }, () => resolve());
-  });
-}
-function setStorageData(data) {
-  return new Promise((resolve) => {
-    chrome.storage.local.set(data, () => {
-      resolve();
-    });
-  });
+  if (!refKey) return Promise.resolve();
+  return saveWorkImage(refKey, record);
 }
 function saveWorkEntryWithIndex(storageKey, workEntry) {
-  return new Promise((resolve) => {
-    chrome.storage.local.get([INDEX_KEY], (r) => {
-      const index = upsertIndexRow(r[INDEX_KEY], storageKey, workEntry);
-      chrome.storage.local.set({ [storageKey]: workEntry, [INDEX_KEY]: index }, () => resolve());
-    });
-  });
+  return saveWorkWithIndex(storageKey, workEntry);
 }
-function clearAllStorage() {
+async function clearAllStorage() {
+  await clearOverlayData();
   return new Promise((resolve) => {
-    chrome.storage.local.clear(() => {
-      resolve();
-    });
+    chrome.storage.local.clear(() => resolve());
   });
 }
 function updateBoxNoteInStorage(storageKey, imageSelector, boxIndex, newText, allData2) {
@@ -249,17 +861,8 @@ function updateBoxNoteInStorage(storageKey, imageSelector, boxIndex, newText, al
     if (imageData.boxes && imageData.boxes[boxIndex]) {
       imageData.boxes[boxIndex].note = newText;
       workEntry.metadata.lastUpdated = Date.now();
-      const update = {};
-      update[storageKey] = workEntry;
-      return new Promise((resolve) => {
-        chrome.storage.local.get([INDEX_KEY], (r) => {
-          const index = upsertIndexRow(r[INDEX_KEY], storageKey, workEntry);
-          update[INDEX_KEY] = index;
-          setStorageData(update).then(() => {
-            allData2[storageKey] = workEntry;
-            resolve();
-          });
-        });
+      return saveWorkEntryWithIndex(storageKey, workEntry).then(() => {
+        allData2[storageKey] = workEntry;
       });
     }
   }
@@ -894,7 +1497,7 @@ function filterAndGroupData(allData2, query = "") {
   Object.keys(allData2).forEach((storageKey) => {
     if (isDashboardMetaKey(storageKey)) return;
     const val = allData2[storageKey];
-    if (val && typeof val === "object" && val.images && val.workId !== void 0) {
+    if (val && typeof val === "object" && val.images != null && (val.workId !== void 0 || storageKey.startsWith("work:"))) {
       const workEntry = val;
       let hostname = "Unknown";
       try {
@@ -982,9 +1585,16 @@ function filterWorks(works, filters = {}) {
     return true;
   });
 }
-const LIBRARY_PAGE_SIZE = 12;
-function renderPaginationBar$1(el, { page, totalPages, totalWorks, pageSize, onPageChange }) {
-  if (!el || !onPageChange) return;
+function renderPaginationBarInto(el, opts) {
+  const {
+    page,
+    totalPages,
+    totalItems,
+    pageSize,
+    onPageChange,
+    ariaLabel = "Pages"
+  } = opts;
+  if (!onPageChange) return;
   if (totalPages <= 1) {
     el.innerHTML = "";
     el.hidden = true;
@@ -992,9 +1602,11 @@ function renderPaginationBar$1(el, { page, totalPages, totalWorks, pageSize, onP
   }
   el.hidden = false;
   el.innerHTML = "";
-  el.className = "do-pagination";
+  if (!el.classList.contains("do-pagination")) {
+    el.classList.add("do-pagination");
+  }
   el.setAttribute("role", "navigation");
-  el.setAttribute("aria-label", "Library pages");
+  el.setAttribute("aria-label", ariaLabel);
   const prev = document.createElement("button");
   prev.type = "button";
   prev.className = "do-btn";
@@ -1004,8 +1616,34 @@ function renderPaginationBar$1(el, { page, totalPages, totalWorks, pageSize, onP
   const info = document.createElement("span");
   info.className = "do-pagination-info";
   const start = (page - 1) * pageSize + 1;
-  const end = Math.min(page * pageSize, totalWorks);
-  info.textContent = `Page ${page} / ${totalPages} · ${start}–${end} of ${totalWorks}`;
+  const end = Math.min(page * pageSize, totalItems);
+  info.append("Page ");
+  const pageInput = document.createElement("input");
+  pageInput.type = "number";
+  pageInput.className = "do-pagination-page-input";
+  pageInput.min = "1";
+  pageInput.max = String(totalPages);
+  pageInput.value = String(page);
+  pageInput.setAttribute("aria-label", "Jump to page");
+  const jump = () => {
+    let next2 = parseInt(pageInput.value, 10);
+    if (!Number.isFinite(next2)) {
+      pageInput.value = String(page);
+      return;
+    }
+    next2 = Math.min(Math.max(1, next2), totalPages);
+    pageInput.value = String(next2);
+    if (next2 !== page) onPageChange(next2);
+  };
+  pageInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      jump();
+      pageInput.blur();
+    }
+  });
+  pageInput.addEventListener("change", jump);
+  info.append(pageInput, ` / ${totalPages} · ${start}–${end} of ${totalItems}`);
   const next = document.createElement("button");
   next.type = "button";
   next.className = "do-btn";
@@ -1016,6 +1654,14 @@ function renderPaginationBar$1(el, { page, totalPages, totalWorks, pageSize, onP
   el.appendChild(info);
   el.appendChild(next);
 }
+function renderPaginationBar(el, opts) {
+  if (!el) return;
+  const targets = Array.isArray(el) ? el : [el];
+  for (const target of targets) {
+    if (target) renderPaginationBarInto(target, opts);
+  }
+}
+const LIBRARY_PAGE_SIZE = 12;
 function renderDashboard(allData2, query = "", listContainer2, onWorkDelete, onUpdate, opts = {}) {
   const pageSize = opts.pageSize ?? LIBRARY_PAGE_SIZE;
   const requestedPage = opts.page ?? 1;
@@ -1047,12 +1693,13 @@ function renderDashboard(allData2, query = "", listContainer2, onWorkDelete, onU
   pageWorks.forEach((work) => {
     listContainer2.appendChild(createWorkCard(work, onWorkDelete, onUpdate));
   });
-  renderPaginationBar$1(paginationEl2, {
+  renderPaginationBar(paginationEl2, {
     page: currentPage,
     totalPages,
-    totalWorks,
+    totalItems: totalWorks,
     pageSize,
-    onPageChange
+    onPageChange,
+    ariaLabel: "Library pages"
   });
   return { totalWorks, totalPages, currentPage };
 }
@@ -1114,80 +1761,77 @@ function parseLikeArchive(text) {
     return { tweetId, text: text2, fullText, tcoLinks, postUrl };
   }).filter((e) => e.tweetId);
 }
+const LIKES_EXPORT_FORMAT$1 = "deepoverlay-likes-v1";
+function normalizeLikeEntries(raw) {
+  const list = Array.isArray(raw) ? raw : raw?.entries;
+  if (!Array.isArray(list)) return [];
+  return list.map((entry) => {
+    const like = entry?.like || entry;
+    const tweetId = String(like?.tweetId || "");
+    if (!tweetId) return null;
+    let fullText = like.fullText || like.text || "";
+    const tcoLinks = Array.isArray(like.tcoLinks) && like.tcoLinks.length ? like.tcoLinks : [...String(fullText).matchAll(/https:\/\/t\.co\/\S+/g)].map((m) => m[0]);
+    const text = like.text || String(fullText).replace(/https:\/\/t\.co\/\S+/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim();
+    const postUrl = like.postUrl || like.expandedUrl || `https://x.com/i/status/${tweetId}`;
+    return { tweetId, text, fullText: fullText || text, tcoLinks, postUrl };
+  }).filter(Boolean);
+}
+function parseLikeImport(text, filename = "") {
+  const trimmed = text.trim();
+  const isJson = filename.toLowerCase().endsWith(".json") || trimmed.startsWith("{") || trimmed.startsWith("[");
+  if (isJson) {
+    const data = JSON.parse(trimmed);
+    return normalizeLikeEntries(data);
+  }
+  return parseLikeArchive(text);
+}
+function isSyncExportFormat(data) {
+  return data && typeof data === "object" && data.format === LIKES_EXPORT_FORMAT$1 && Array.isArray(data.entries);
+}
 const THUMB_CACHE_KEY = "likes:thumbCache";
-const DB_NAME = "deepoverlay";
-const DB_VERSION = 1;
-const STORES = {
-  LIKES_META: "likes_meta",
-  LIKES: "likes",
-  LIKE_THUMBS: "like_thumbs"
-};
-function openDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
-    req.onsuccess = () => resolve(req.result);
-    req.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      if (!db.objectStoreNames.contains(STORES.LIKES_META)) {
-        db.createObjectStore(STORES.LIKES_META, { keyPath: "id" });
-      }
-      if (!db.objectStoreNames.contains(STORES.LIKES)) {
-        const likes = db.createObjectStore(STORES.LIKES, { keyPath: "tweetId" });
-        likes.createIndex("sortOrder", "sortOrder", { unique: false });
-        likes.createIndex("hidden", "hidden", { unique: false });
-      }
-      if (!db.objectStoreNames.contains(STORES.LIKE_THUMBS)) {
-        db.createObjectStore(STORES.LIKE_THUMBS, { keyPath: "tweetId" });
-      }
-    };
-  });
-}
-function store(db, storeName, mode = "readonly") {
-  return db.transaction(storeName, mode).objectStore(storeName);
-}
-function getOne(os, key) {
-  return new Promise((resolve, reject) => {
-    const req = os.get(key);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-function getAll(os) {
-  return new Promise((resolve, reject) => {
-    const req = os.getAll();
-    req.onsuccess = () => resolve(req.result ?? []);
-    req.onerror = () => reject(req.error);
-  });
-}
-function putOne(os, value) {
-  return new Promise((resolve, reject) => {
-    const req = os.put(value);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-function deleteOne(os, key) {
-  return new Promise((resolve, reject) => {
-    const req = os.delete(key);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-function clearStore(os) {
-  return new Promise((resolve, reject) => {
-    const req = os.clear();
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
 const META_ID = "main";
+const LIKES_ORDER_V = 2;
 let dbPromise = null;
 let thumbMigrationDone = false;
+let likesOrderMigrationDone = false;
+function compareTweetIdDesc(a, b) {
+  if (a.length !== b.length) return b.length - a.length;
+  if (a === b) return 0;
+  return a > b ? -1 : 1;
+}
+function compareLikesNewestFirst(a, b) {
+  const order = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+  if (order !== 0) return order;
+  const liked = (b.likedAt ?? 0) - (a.likedAt ?? 0);
+  if (liked !== 0) return liked;
+  return compareTweetIdDesc(a.tweetId, b.tweetId);
+}
+function stampNewestFirstOrder(rows, likedAtBase = Date.now()) {
+  rows.forEach((row, i) => {
+    row.sortOrder = i;
+    row.likedAt = likedAtBase - i;
+  });
+}
+async function migrateLikesOrderFields(db) {
+  if (likesOrderMigrationDone) return;
+  likesOrderMigrationDone = true;
+  const meta = await getOne(store(db, STORES.LIKES_META), META_ID);
+  if (meta?.likesOrderV >= LIKES_ORDER_V) return;
+  const rows = await getAll(store(db, STORES.LIKES));
+  if (rows.length) {
+    rows.sort(compareLikesNewestFirst);
+    stampNewestFirstOrder(rows);
+    await putMany(store(db, STORES.LIKES, "readwrite"), rows);
+  }
+  if (meta) {
+    await putOne(store(db, STORES.LIKES_META, "readwrite"), { ...meta, likesOrderV: LIKES_ORDER_V });
+  }
+}
 function getDb() {
   if (!dbPromise) {
     dbPromise = openDb().then(async (db) => {
       await migrateThumbCacheFromChromeStorage(db);
+      await migrateLikesOrderFields(db);
       return db;
     });
   }
@@ -1200,16 +1844,14 @@ async function migrateThumbCacheFromChromeStorage(db) {
     chrome.storage?.local?.get([THUMB_CACHE_KEY], (r) => resolve(r?.[THUMB_CACHE_KEY] || null));
   });
   if (!legacy || typeof legacy !== "object" || !Object.keys(legacy).length) return;
-  const thumbOs = store(db, STORES.LIKE_THUMBS, "readwrite");
-  const existing = await getAll(thumbOs);
+  const existing = await getAll(store(db, STORES.LIKE_THUMBS));
   if (existing.length > 0) {
     await chrome.storage?.local?.remove([THUMB_CACHE_KEY]);
     return;
   }
-  await Promise.all(
-    Object.entries(legacy).map(
-      ([tweetId, entry]) => putOne(thumbOs, { tweetId, ...entry })
-    )
+  await putMany(
+    store(db, STORES.LIKE_THUMBS, "readwrite"),
+    Object.entries(legacy).map(([tweetId, entry]) => ({ tweetId, ...entry }))
   );
   await chrome.storage?.local?.remove([THUMB_CACHE_KEY]);
 }
@@ -1230,75 +1872,121 @@ async function importLikes(entries, opts = {}) {
   const now = Date.now();
   const sourceName = opts.sourceName || "like.js";
   const replace = opts.replace !== false;
+  const prepend = !replace && opts.prepend === true;
   if (replace) {
     await clearStore(store(db, STORES.LIKES, "readwrite"));
   }
-  let startOrder = 0;
+  const existingById = /* @__PURE__ */ new Map();
   if (!replace) {
-    const existing = await getAll(store(db, STORES.LIKES));
-    startOrder = existing.reduce((max, row) => Math.max(max, row.sortOrder ?? 0), -1) + 1;
+    for (const row of await getAll(store(db, STORES.LIKES))) {
+      existingById.set(row.tweetId, row);
+    }
   }
-  const likesOs = store(db, STORES.LIKES, "readwrite");
   const seen = /* @__PURE__ */ new Set();
-  let imported = 0;
+  const likeRows = [];
+  let skipped = 0;
+  let fileOrder = 0;
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
     if (!e?.tweetId || seen.has(e.tweetId)) continue;
     seen.add(e.tweetId);
-    let hidden = false;
-    if (!replace) {
-      const prev = await getOne(likesOs, e.tweetId);
-      if (prev) hidden = !!prev.hidden;
+    if (!replace && existingById.has(e.tweetId)) {
+      skipped++;
+      continue;
     }
-    await putOne(likesOs, {
+    likeRows.push({
       tweetId: e.tweetId,
       text: e.text || "",
       fullText: e.fullText || "",
       tcoLinks: e.tcoLinks || [],
       postUrl: e.postUrl || `https://x.com/i/web/status/${e.tweetId}`,
-      sortOrder: replace ? i : startOrder + imported,
-      hidden,
+      sortOrder: fileOrder,
+      likedAt: 0,
+      hidden: false,
       importedAt: now
     });
-    imported++;
+    fileOrder++;
   }
-  const metaOs = store(db, STORES.LIKES_META, "readwrite");
-  const total = replace ? imported : (await getAll(likesOs)).length;
-  await putOne(metaOs, {
+  const imported = likeRows.length;
+  if (imported > 0) {
+    const toWrite = [];
+    if (prepend) {
+      stampNewestFirstOrder(likeRows, now);
+      for (const row of existingById.values()) {
+        toWrite.push({
+          ...row,
+          sortOrder: (row.sortOrder ?? 0) + imported,
+          likedAt: (row.likedAt ?? 0) - imported
+        });
+      }
+    } else if (!replace) {
+      const startOrder = [...existingById.values()].reduce((max, row) => Math.max(max, row.sortOrder ?? 0), -1) + 1;
+      const likedBase = Math.min(
+        ...[...existingById.values()].map((row) => row.likedAt ?? 0),
+        now
+      );
+      likeRows.forEach((row, i) => {
+        row.sortOrder = startOrder + i;
+        row.likedAt = likedBase - (imported - i);
+      });
+    } else {
+      stampNewestFirstOrder(likeRows, now);
+    }
+    toWrite.push(...likeRows);
+    await putMany(store(db, STORES.LIKES, "readwrite"), toWrite);
+  }
+  const total = replace ? imported : (await getAll(store(db, STORES.LIKES))).length;
+  await putOne(store(db, STORES.LIKES_META, "readwrite"), {
     id: META_ID,
     importedAt: now,
     count: total,
     sourceName
   });
-  return { imported, total };
+  return { imported, skipped, total };
+}
+const LIKES_EXPORT_FORMAT = "deepoverlay-likes-v1";
+async function exportLikesLibrary() {
+  const likes = await getAllLikes({ includeHidden: true });
+  const entries = likes.map((l) => ({
+    tweetId: l.tweetId,
+    text: l.text || "",
+    fullText: l.fullText || l.text || "",
+    tcoLinks: l.tcoLinks || [],
+    postUrl: l.postUrl || `https://x.com/i/status/${l.tweetId}`
+  }));
+  const newest = entries[0] ? {
+    tweetId: entries[0].tweetId,
+    text: entries[0].text,
+    postUrl: entries[0].postUrl
+  } : null;
+  return {
+    format: LIKES_EXPORT_FORMAT,
+    exportedAt: Date.now(),
+    count: entries.length,
+    newest,
+    tweetIds: entries.map((e) => e.tweetId),
+    entries
+  };
 }
 async function getAllLikes(opts = {}) {
   const db = await getDb();
   const rows = await getAll(store(db, STORES.LIKES));
   const visible = opts.includeHidden ? rows : rows.filter((r) => !r.hidden);
-  visible.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  visible.sort(compareLikesNewestFirst);
   return visible;
 }
-async function updateLike(tweetId, patch) {
-  const db = await getDb();
-  const os = store(db, STORES.LIKES, "readwrite");
-  const existing = await getOne(os, tweetId);
-  if (!existing) return null;
-  const next = { ...existing, ...patch, tweetId };
-  await putOne(os, next);
-  return next;
-}
-async function hideLike(tweetId) {
-  return updateLike(tweetId, { hidden: true });
-}
 async function deleteLike(tweetId) {
+  await deleteLikes([tweetId]);
+}
+async function deleteLikes(tweetIds) {
+  const ids = [...new Set(tweetIds.filter(Boolean))];
+  if (!ids.length) return;
   const db = await getDb();
-  await deleteOne(store(db, STORES.LIKES, "readwrite"), tweetId);
-  await deleteOne(store(db, STORES.LIKE_THUMBS, "readwrite"), tweetId);
+  await deleteMany(store(db, STORES.LIKES, "readwrite"), ids);
+  await deleteMany(store(db, STORES.LIKE_THUMBS, "readwrite"), ids);
   const remaining = await getAll(store(db, STORES.LIKES));
-  const metaOs = store(db, STORES.LIKES_META, "readwrite");
   const meta = await getOne(store(db, STORES.LIKES_META), META_ID) || { id: META_ID };
-  await putOne(metaOs, { ...meta, count: remaining.length });
+  await putOne(store(db, STORES.LIKES_META, "readwrite"), { ...meta, count: remaining.length });
 }
 async function getAllThumbsMap() {
   const db = await getDb();
@@ -1325,7 +2013,10 @@ function requestThumbResolve(tweetIds) {
 function createLikeCard(like, thumb, opts = {}) {
   const card = document.createElement("article");
   card.className = "do-like-card";
+  if (opts.hasOverlay) card.classList.add("do-like-card--has-overlay");
+  if (opts.selectedTweetIds?.has(like.tweetId)) card.classList.add("do-like-card--selected");
   card.dataset.tweetId = like.tweetId;
+  if (opts.hasOverlay) card.dataset.hasOverlay = "true";
   const mediaUrl = thumb?.mediaUrl;
   const mediaUrls = thumb?.mediaUrls?.length ? thumb.mediaUrls : mediaUrl ? [mediaUrl] : [];
   const mediaType = thumb?.mediaType;
@@ -1372,6 +2063,32 @@ function createLikeCard(like, thumb, opts = {}) {
     count.setAttribute("aria-label", `${mediaUrls.length} images`);
     thumbEl.appendChild(count);
   }
+  if (opts.hasOverlay) {
+    const overlayBadge = document.createElement("span");
+    overlayBadge.className = "do-like-badge do-like-badge--overlay";
+    overlayBadge.textContent = "⊞";
+    overlayBadge.title = "Has DeepOverlay annotation";
+    overlayBadge.setAttribute("aria-label", "Has overlay annotation");
+    thumbEl.appendChild(overlayBadge);
+  }
+  if (opts.onSelectToggle) {
+    const selectWrap = document.createElement("label");
+    selectWrap.className = "do-like-select";
+    selectWrap.title = "Select for bulk delete";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "do-like-select-cb";
+    cb.checked = opts.selectedTweetIds?.has(like.tweetId) ?? false;
+    cb.setAttribute("aria-label", "Select like");
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", (e) => {
+      e.stopPropagation();
+      opts.onSelectToggle(like.tweetId, cb.checked);
+      card.classList.toggle("do-like-card--selected", cb.checked);
+    });
+    selectWrap.appendChild(cb);
+    thumbEl.appendChild(selectWrap);
+  }
   const caption = document.createElement("p");
   caption.className = "do-like-caption";
   caption.textContent = like.text || "(no text)";
@@ -1385,18 +2102,6 @@ function createLikeCard(like, thumb, opts = {}) {
   link.addEventListener("click", (e) => e.stopPropagation());
   const actions = document.createElement("div");
   actions.className = "do-like-actions";
-  if (opts.onHide) {
-    const hideBtn = document.createElement("button");
-    hideBtn.type = "button";
-    hideBtn.className = "do-btn do-like-action-btn";
-    hideBtn.textContent = "Hide";
-    hideBtn.title = "Hide from gallery (keeps in database)";
-    hideBtn.onclick = (e) => {
-      e.stopPropagation();
-      opts.onHide(like.tweetId);
-    };
-    actions.appendChild(hideBtn);
-  }
   if (opts.onDelete) {
     const delBtn = document.createElement("button");
     delBtn.type = "button";
@@ -1421,50 +2126,57 @@ function updateLikeCardThumb(card, like, thumb, opts = {}) {
   return next;
 }
 const LIKES_PAGE_SIZE = 48;
-function filterLikes(likes, query, mediaOnly, thumbCache2) {
+function getLikesColumnCount(width = typeof window !== "undefined" ? window.innerWidth : 1400) {
+  if (width <= 600) return 1;
+  if (width <= 1100) return 2;
+  if (width <= 1400) return 3;
+  return 4;
+}
+function orderForColumnLayout(items, colCount) {
+  const n = items.length;
+  if (n <= 1 || colCount <= 1) return items;
+  const numRows = Math.ceil(n / colCount);
+  const columns = Array.from({ length: colCount }, () => []);
+  for (let col = 0; col < colCount; col++) {
+    for (let row = 0; row < numRows; row++) {
+      const idx = row * colCount + col;
+      if (idx < n) columns[col].push(items[idx]);
+    }
+  }
+  return columns.flat();
+}
+function photoCount(thumb) {
+  if (thumb.mediaUrls?.length) return thumb.mediaUrls.length;
+  if (thumb.mediaUrl && thumb.mediaType === "photo") return 1;
+  return 0;
+}
+function isVideoLike(thumb) {
+  return thumb.mediaType === "video" || thumb.mediaType === "gif";
+}
+function isPhotoLike(thumb) {
+  return thumb.mediaType === "photo" && !!thumb.mediaUrl;
+}
+function matchesLikesFilter(filter, thumb, tweetId, overlayTweetIds2) {
+  if (filter === "with-overlay") return overlayTweetIds2.has(tweetId);
+  if (filter === "no-overlay") return !overlayTweetIds2.has(tweetId);
+  if (filter === "all") return true;
+  if (!thumb?.resolvedAt) return false;
+  if (filter === "video") return isVideoLike(thumb);
+  if (filter === "image") return isPhotoLike(thumb);
+  if (filter === "single") return isPhotoLike(thumb) && photoCount(thumb) === 1;
+  if (filter === "multiple") return isPhotoLike(thumb) && photoCount(thumb) > 1;
+  return true;
+}
+function filterLikes(likes, query, filter, thumbCache2, overlayTweetIds2 = /* @__PURE__ */ new Set()) {
   const q = query.trim().toLowerCase();
   return likes.filter((like) => {
-    if (mediaOnly) {
+    if (filter !== "all") {
       const thumb = thumbCache2[like.tweetId];
-      if (!thumb?.resolvedAt) return true;
-      if (thumb.mediaType === "none" || !thumb.mediaUrl) return false;
+      if (!matchesLikesFilter(filter, thumb || {}, like.tweetId, overlayTweetIds2)) return false;
     }
     if (!q) return true;
     return like.text.toLowerCase().includes(q) || like.tweetId.includes(q) || like.postUrl.toLowerCase().includes(q);
   });
-}
-function renderPaginationBar(el, { page, totalPages, totalItems, pageSize, onPageChange }) {
-  if (!el || !onPageChange) return;
-  if (totalPages <= 1) {
-    el.innerHTML = "";
-    el.hidden = true;
-    return;
-  }
-  el.hidden = false;
-  el.innerHTML = "";
-  el.className = "do-pagination";
-  el.setAttribute("role", "navigation");
-  el.setAttribute("aria-label", "Likes pages");
-  const prev = document.createElement("button");
-  prev.type = "button";
-  prev.className = "do-btn";
-  prev.textContent = "← Prev";
-  prev.disabled = page <= 1;
-  prev.onclick = () => onPageChange(page - 1);
-  const info = document.createElement("span");
-  info.className = "do-pagination-info";
-  const start = (page - 1) * pageSize + 1;
-  const end = Math.min(page * pageSize, totalItems);
-  info.textContent = `Page ${page} / ${totalPages} · ${start}–${end} of ${totalItems}`;
-  const next = document.createElement("button");
-  next.type = "button";
-  next.className = "do-btn";
-  next.textContent = "Next →";
-  next.disabled = page >= totalPages;
-  next.onclick = () => onPageChange(page + 1);
-  el.appendChild(prev);
-  el.appendChild(info);
-  el.appendChild(next);
 }
 function ensureLightbox(container) {
   let lb = container.querySelector(".do-likes-lightbox");
@@ -1511,9 +2223,18 @@ function ensureLightbox(container) {
   });
   document.addEventListener("keydown", (e) => {
     if (lb.hidden) return;
-    if (e.key === "Escape") hide();
-    else if (e.key === "ArrowLeft") lb.querySelector(".do-likes-lightbox-prev").click();
-    else if (e.key === "ArrowRight") lb.querySelector(".do-likes-lightbox-next").click();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      hide();
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      e.stopPropagation();
+      lb.querySelector(".do-likes-lightbox-prev").click();
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      e.stopPropagation();
+      lb.querySelector(".do-likes-lightbox-next").click();
+    }
   });
   lb._open = (urls, index = 0) => {
     state.urls = urls;
@@ -1526,17 +2247,19 @@ function renderLikes(opts) {
   const {
     likes,
     query = "",
-    mediaOnly = false,
+    filter = "all",
     thumbCache: thumbCache2 = {},
+    overlayTweetIds: overlayTweetIds2 = /* @__PURE__ */ new Set(),
     page = 1,
     gridEl,
     paginationEl: paginationEl2,
     lightboxEl,
     onPageChange,
-    onHide,
-    onDelete
+    onDelete,
+    selectedTweetIds,
+    onSelectToggle
   } = opts;
-  const filtered = filterLikes(likes, query, mediaOnly, thumbCache2);
+  const filtered = filterLikes(likes, query, filter, thumbCache2, overlayTweetIds2);
   const totalItems = filtered.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / LIKES_PAGE_SIZE));
   const currentPage = Math.min(Math.max(1, page), totalPages);
@@ -1548,13 +2271,24 @@ function renderLikes(opts) {
   gridEl.innerHTML = "";
   gridEl.className = "do-likes-grid";
   if (totalItems === 0) {
-    gridEl.innerHTML = `<div class="empty-state">${query || mediaOnly ? "No likes match your filters." : "No likes loaded."}</div>`;
+    gridEl.innerHTML = `<div class="empty-state">${query || filter !== "all" ? "No likes match your filters." : "No likes loaded."}</div>`;
   } else {
     const lightbox = ensureLightbox(lightboxEl || gridEl.parentElement);
     const openLightbox = (urls, index) => lightbox._open(urls, index);
-    for (const like of pageItems) {
+    const colCount = getLikesColumnCount();
+    const displayItems = orderForColumnLayout(pageItems, colCount);
+    for (const like of displayItems) {
       const thumb = thumbCache2[like.tweetId];
-      gridEl.appendChild(createLikeCard(like, thumb, { onOpenLightbox: openLightbox, onHide, onDelete }));
+      const hasOverlay = overlayTweetIds2.has(like.tweetId);
+      gridEl.appendChild(
+        createLikeCard(like, thumb, {
+          onOpenLightbox: openLightbox,
+          onDelete,
+          hasOverlay,
+          selectedTweetIds,
+          onSelectToggle
+        })
+      );
     }
   }
   renderPaginationBar(paginationEl2, {
@@ -1562,7 +2296,8 @@ function renderLikes(opts) {
     totalPages,
     totalItems,
     pageSize: LIKES_PAGE_SIZE,
-    onPageChange
+    onPageChange,
+    ariaLabel: "Likes pages"
   });
   return { filtered, totalPages, currentPage, pageItems };
 }
@@ -1570,27 +2305,75 @@ function refreshLikeCardThumbs(gridEl, pageItems, thumbCache2, lightboxEl, cardO
   if (!gridEl) return;
   const lightbox = ensureLightbox(lightboxEl || gridEl.parentElement);
   const openLightbox = (urls, index) => lightbox._open(urls, index);
-  const opts = { onOpenLightbox: openLightbox, ...cardOpts };
+  ({ ...cardOpts });
   for (const like of pageItems) {
     const card = gridEl.querySelector(`[data-tweet-id="${like.tweetId}"]`);
     if (!card) continue;
     const thumb = thumbCache2[like.tweetId];
-    if (!thumb?.resolvedAt) continue;
+    if (!thumb?.resolvedAt && !cardOpts.overlayTweetIds?.has(like.tweetId)) continue;
+    const opts = {
+      onOpenLightbox: openLightbox,
+      onDelete: cardOpts.onDelete,
+      hasOverlay: cardOpts.overlayTweetIds?.has(like.tweetId) ?? !!cardOpts.hasOverlay,
+      selectedTweetIds: cardOpts.selectedTweetIds,
+      onSelectToggle: cardOpts.onSelectToggle
+    };
     updateLikeCardThumb(card, like, thumb, opts);
   }
+}
+let binding = null;
+function isTypingTarget(target) {
+  if (!target || !(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return target.isContentEditable;
+}
+function isPanelActive(panelId) {
+  const panel = document.getElementById(`panel-${panelId}`);
+  return panel?.classList.contains("active") ?? false;
+}
+function isLikesLightboxOpen() {
+  return document.body.classList.contains("do-likes-lightbox-open");
+}
+function syncPaginationKeyboard(next) {
+  binding = next;
+}
+let initialized = false;
+function initPaginationKeyboard() {
+  if (initialized) return;
+  initialized = true;
+  document.addEventListener("keydown", (e) => {
+    if (!binding || !isPanelActive(binding.panelId)) return;
+    if (isLikesLightboxOpen()) return;
+    if (isTypingTarget(e.target)) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const { page, totalPages, onPageChange } = binding;
+    if (e.key === "ArrowLeft" && page > 1) {
+      e.preventDefault();
+      onPageChange(page - 1);
+    } else if (e.key === "ArrowRight" && page < totalPages) {
+      e.preventDefault();
+      onPageChange(page + 1);
+    }
+  });
 }
 const RESOLVE_BATCH = 24;
 let likesCache = null;
 let thumbCache = {};
+let overlayTweetIds = /* @__PURE__ */ new Set();
 let likesPage = 1;
 let resolveInFlight = false;
 let panelLoaded = false;
 function initLikesPanel() {
   const gridEl = document.getElementById("likes-grid");
-  const paginationEl2 = document.getElementById("likes-pagination");
+  const paginationEls = [
+    document.getElementById("likes-pagination-top"),
+    document.getElementById("likes-pagination-bottom")
+  ];
   const lightboxEl = document.getElementById("likes-lightbox");
   const searchInput2 = document.getElementById("likes-search-input");
-  const mediaOnlyEl = document.getElementById("likes-media-only");
+  const filterEl = document.getElementById("likes-filter");
   const progressEl = document.getElementById("likes-progress");
   const countEl = document.getElementById("likes-nav-count");
   const statusEl = document.getElementById("likes-status");
@@ -1598,15 +2381,80 @@ function initLikesPanel() {
   const importBtn = document.getElementById("likes-import-btn");
   const bundledBtn = document.getElementById("likes-import-bundled-btn");
   const reimportBtn = document.getElementById("likes-reimport-btn");
+  const exportSyncBtn = document.getElementById("likes-export-sync-btn");
+  const syncHintEl = document.getElementById("likes-sync-hint");
   const fileInput = document.getElementById("likes-file-input");
   const mergeWrap = document.getElementById("likes-merge-wrap");
   const mergeEl = document.getElementById("likes-reimport-merge");
   if (!gridEl) return () => {
   };
-  let mediaOnly = mediaOnlyEl?.checked ?? false;
+  let likesFilter = filterEl?.value || "all";
+  let selectedLikes = /* @__PURE__ */ new Set();
+  let bulkBar = null;
+  function ensureBulkBar() {
+    if (bulkBar) return bulkBar;
+    const paginationTop = document.getElementById("likes-pagination-top");
+    bulkBar = document.createElement("div");
+    bulkBar.id = "likes-bulk-bar";
+    bulkBar.className = "do-likes-bulk-bar bulk-actions-bar";
+    bulkBar.hidden = true;
+    bulkBar.innerHTML = `
+      <div class="bulk-actions-left">
+        <span class="bulk-selection-count">0 selected</span>
+      </div>
+      <div class="bulk-actions-right">
+        <button type="button" class="do-btn" data-action="select-page">Select page</button>
+        <button type="button" class="do-btn danger" data-action="delete">Delete selected</button>
+        <button type="button" class="do-btn" data-action="clear">Clear</button>
+      </div>
+    `;
+    bulkBar.querySelector('[data-action="select-page"]')?.addEventListener("click", selectAllOnPage);
+    bulkBar.querySelector('[data-action="delete"]')?.addEventListener("click", handleBulkDelete2);
+    bulkBar.querySelector('[data-action="clear"]')?.addEventListener("click", clearSelection);
+    const anchor = paginationTop || gridEl;
+    anchor.parentNode?.insertBefore(bulkBar, anchor);
+    return bulkBar;
+  }
+  function updateBulkBar() {
+    const bar = ensureBulkBar();
+    const countEl2 = bar.querySelector(".bulk-selection-count");
+    if (countEl2) countEl2.textContent = `${selectedLikes.size} selected`;
+    bar.hidden = selectedLikes.size === 0;
+  }
+  function clearSelection() {
+    selectedLikes.clear();
+    updateBulkBar();
+    renderCurrent();
+  }
+  function selectAllOnPage() {
+    if (!likesCache) return;
+    const { pageItems } = renderLikes({
+      likes: likesCache,
+      query: searchInput2?.value || "",
+      filter: likesFilter,
+      thumbCache,
+      overlayTweetIds,
+      page: likesPage,
+      gridEl: null,
+      paginationEl: null,
+      lightboxEl: null,
+      onPageChange: () => {
+      }
+    });
+    for (const like of pageItems) selectedLikes.add(like.tweetId);
+    updateBulkBar();
+    renderCurrent();
+  }
+  function handleSelectToggle(tweetId, selected) {
+    if (selected) selectedLikes.add(tweetId);
+    else selectedLikes.delete(tweetId);
+    updateBulkBar();
+  }
   const cardOpts = () => ({
-    onHide: handleHide,
-    onDelete: handleDelete
+    onDelete: handleDelete,
+    overlayTweetIds,
+    selectedTweetIds: selectedLikes,
+    onSelectToggle: handleSelectToggle
   });
   function updateNavCount(n) {
     if (countEl) countEl.textContent = String(n);
@@ -1615,7 +2463,9 @@ function initLikesPanel() {
     if (importBtn) importBtn.hidden = imported;
     if (bundledBtn) bundledBtn.hidden = imported;
     if (reimportBtn) reimportBtn.hidden = !imported;
+    if (exportSyncBtn) exportSyncBtn.hidden = !imported;
     if (mergeWrap) mergeWrap.hidden = !imported;
+    if (syncHintEl) syncHintEl.hidden = !imported;
   }
   function countResolved(cache) {
     return Object.values(cache).filter((e) => e?.resolvedAt).length;
@@ -1627,11 +2477,16 @@ function initLikesPanel() {
     if (!progressEl || !likesCache) return;
     const resolved = countResolved(thumbCache);
     const withMedia = countWithMedia(thumbCache);
-    progressEl.textContent = `Thumbnails: ${resolved} / ${likesCache.length} resolved · ${withMedia} with media`;
+    const withOverlay = overlayTweetIds.size;
+    progressEl.textContent = `Thumbnails: ${resolved} / ${likesCache.length} resolved · ${withMedia} with media · ${withOverlay} with overlay`;
+  }
+  async function reloadOverlayLinks() {
+    overlayTweetIds = await getAnnotatedXTweetIds();
   }
   async function reloadFromDb() {
     likesCache = await getAllLikes();
     thumbCache = await getAllThumbsMap();
+    await reloadOverlayLinks();
     updateNavCount(likesCache.length);
     const meta = await getLikesMeta();
     if (statusEl) {
@@ -1646,22 +2501,35 @@ function initLikesPanel() {
     const r = renderLikes({
       likes: likesCache,
       query: searchInput2?.value || "",
-      mediaOnly,
+      filter: likesFilter,
       thumbCache,
+      overlayTweetIds,
       page: likesPage,
       gridEl,
-      paginationEl: paginationEl2,
+      paginationEl: paginationEls,
       lightboxEl,
       onPageChange: (p) => {
         likesPage = p;
         renderCurrent();
         queueResolveForPage();
       },
-      onHide: opts.onHide,
-      onDelete: opts.onDelete
+      onDelete: opts.onDelete,
+      selectedTweetIds: opts.selectedTweetIds,
+      onSelectToggle: opts.onSelectToggle
     });
     likesPage = r.currentPage;
+    syncPaginationKeyboard({
+      panelId: "likes",
+      page: likesPage,
+      totalPages: r.totalPages,
+      onPageChange: (p) => {
+        likesPage = p;
+        renderCurrent();
+        queueResolveForPage();
+      }
+    });
     updateProgress();
+    updateBulkBar();
     return r;
   }
   async function resolveNextBatch() {
@@ -1682,11 +2550,12 @@ function initLikesPanel() {
         const { pageItems } = renderLikes({
           likes: likesCache,
           query: searchInput2?.value || "",
-          mediaOnly,
+          filter: likesFilter,
           thumbCache,
+          overlayTweetIds,
           page: likesPage,
           gridEl,
-          paginationEl: paginationEl2,
+          paginationEl: paginationEls,
           lightboxEl,
           onPageChange: (p) => {
             likesPage = p;
@@ -1707,8 +2576,9 @@ function initLikesPanel() {
     const { pageItems } = renderLikes({
       likes: likesCache,
       query: searchInput2?.value || "",
-      mediaOnly,
+      filter: likesFilter,
       thumbCache,
+      overlayTweetIds,
       page: likesPage,
       gridEl: null,
       paginationEl: null,
@@ -1727,44 +2597,92 @@ function initLikesPanel() {
     }
     resolveNextBatch();
   }
-  async function handleHide(tweetId) {
-    await hideLike(tweetId);
+  async function handleDelete(tweetId) {
+    await deleteLike(tweetId);
+    selectedLikes.delete(tweetId);
+    delete thumbCache[tweetId];
     await reloadFromDb();
     renderCurrent();
   }
-  async function handleDelete(tweetId) {
-    await deleteLike(tweetId);
-    delete thumbCache[tweetId];
+  async function handleBulkDelete2() {
+    const ids = [...selectedLikes];
+    if (!ids.length) return;
+    if (!confirm(`Remove ${ids.length} like${ids.length === 1 ? "" : "s"} from your library?`)) return;
+    await deleteLikes(ids);
+    for (const id of ids) {
+      selectedLikes.delete(id);
+      delete thumbCache[id];
+    }
     await reloadFromDb();
     renderCurrent();
   }
   async function handleImportFile(file) {
     if (!file) return;
     const text = await file.text();
-    const entries = parseLikeArchive(text);
-    const merge = mergeEl?.checked ?? false;
+    let parsedJson = null;
+    if (file.name.toLowerCase().endsWith(".json")) {
+      try {
+        parsedJson = JSON.parse(text);
+      } catch {
+        if (statusEl) statusEl.textContent = "Invalid JSON file.";
+        return;
+      }
+    }
+    const entries = parseLikeImport(text, file.name);
+    if (!entries.length) {
+      if (statusEl) statusEl.textContent = "No likes found in file.";
+      return;
+    }
+    const isSync = isSyncExportFormat(parsedJson) || file.name.toLowerCase().includes("sync");
+    const merge = isSync ? true : mergeEl?.checked ?? false;
     if (!merge && likesCache?.length) {
-      if (!confirm("Replace all likes in library with this file? Hidden items will be lost unless you choose Merge.")) {
+      if (!confirm("Replace all likes in library with this file?")) {
         return;
       }
     }
     if (statusEl) statusEl.textContent = "Importing…";
-    const { total } = await importLikes(entries, { sourceName: file.name, replace: !merge });
+    const { imported, skipped, total } = await importLikes(entries, {
+      sourceName: file.name,
+      replace: !merge,
+      prepend: merge
+    });
     await reloadFromDb();
     likesPage = 1;
     panelLoaded = true;
     renderCurrent();
     queueResolveForPage();
-    if (statusEl) statusEl.textContent = `Imported ${total} likes from ${file.name}`;
+    if (statusEl) {
+      if (merge) {
+        statusEl.textContent = `Added ${imported} new likes (${skipped} already in library) · ${total} total`;
+      } else {
+        statusEl.textContent = `Imported ${total} likes from ${file.name}`;
+      }
+    }
+  }
+  async function handleExportSync() {
+    const data = await exportLikesLibrary();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `deepoverlay_likes_sync_${(/* @__PURE__ */ new Date()).toISOString().split("T")[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    if (statusEl && data.newest) {
+      statusEl.textContent = `Exported ${data.count} likes · newest: ${data.newest.tweetId}`;
+    }
   }
   function showEmptyImportState() {
     updateImportUi(false);
     if (statusEl) statusEl.textContent = "Import your X archive like.js once — then manage likes here without the file.";
     gridEl.innerHTML = `<div class="empty-state">No likes in library yet. Click <strong>Import like.js</strong> above.</div>`;
-    if (paginationEl2) {
-      paginationEl2.innerHTML = "";
-      paginationEl2.hidden = true;
+    for (const el of paginationEls) {
+      if (!el) continue;
+      el.innerHTML = "";
+      el.hidden = true;
     }
+    if (bulkBar) bulkBar.hidden = true;
+    selectedLikes.clear();
     updateNavCount(0);
   }
   async function loadLikes() {
@@ -1788,19 +2706,26 @@ function initLikesPanel() {
   }
   importBtn?.addEventListener("click", () => fileInput?.click());
   reimportBtn?.addEventListener("click", () => fileInput?.click());
+  exportSyncBtn?.addEventListener("click", () => handleExportSync().catch((err) => {
+    if (statusEl) statusEl.textContent = err?.message || "Export failed.";
+  }));
   bundledBtn?.addEventListener("click", async () => {
     try {
       const url = chrome.runtime.getURL("data/like.js");
       const res = await fetch(url);
       if (!res.ok) throw new Error("data/like.js not found in extension — use file import.");
       const text = await res.text();
-      const entries = parseLikeArchive(text);
+      const entries = parseLikeImport(text, "data/like.js");
       const merge = mergeEl?.checked ?? false;
       if (!merge && likesCache?.length) {
         if (!confirm("Replace all likes in library with bundled data/like.js?")) return;
       }
       if (statusEl) statusEl.textContent = "Importing bundled like.js…";
-      const { total } = await importLikes(entries, { sourceName: "data/like.js", replace: !merge });
+      const { imported, skipped, total } = await importLikes(entries, {
+        sourceName: "data/like.js",
+        replace: !merge,
+        prepend: merge
+      });
       await reloadFromDb();
       likesPage = 1;
       panelLoaded = true;
@@ -1823,13 +2748,23 @@ function initLikesPanel() {
       renderCurrent();
     });
   }
-  if (mediaOnlyEl) {
-    mediaOnlyEl.addEventListener("change", () => {
-      mediaOnly = mediaOnlyEl.checked;
+  if (filterEl) {
+    filterEl.addEventListener("change", () => {
+      likesFilter = filterEl.value || "all";
       likesPage = 1;
       renderCurrent();
     });
   }
+  subscribeOverlayChanges(async () => {
+    await reloadOverlayLinks();
+    renderCurrent();
+  });
+  let likesResizeTimer;
+  window.addEventListener("resize", () => {
+    if (!panelLoaded || !likesCache?.length) return;
+    clearTimeout(likesResizeTimer);
+    likesResizeTimer = setTimeout(() => renderCurrent(), 150);
+  });
   return () => {
     if (!panelLoaded) loadLikes();
     else renderCurrent();
@@ -1883,6 +2818,7 @@ function syncManifestVersion() {
 }
 document.addEventListener("DOMContentLoaded", () => {
   syncManifestVersion();
+  initPaginationKeyboard();
   const showLikesPanel = initLikesPanel();
   initNav((panelId) => {
     if (panelId === "likes") showLikesPanel?.();
@@ -1907,6 +2843,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("export-btn").onclick = exportData;
   document.getElementById("clear-btn").onclick = clearAllData;
   document.getElementById("theme-toggle").onclick = toggleTheme;
+  subscribeOverlayChanges(() => loadDashboard());
   window.inspectStorage = () => {
     chrome.storage.local.get(null, (items) => {
       console.log("=== Storage Contents ===");
@@ -1979,6 +2916,15 @@ function renderLibrary() {
     }
   });
   if (r) libraryPage = r.currentPage;
+  syncPaginationKeyboard({
+    panelId: "library",
+    page: libraryPage,
+    totalPages: r?.totalPages ?? 1,
+    onPageChange: (p) => {
+      libraryPage = p;
+      renderLibrary();
+    }
+  });
 }
 function updateLibraryNavCount(data) {
   const el = document.getElementById("library-nav-count");

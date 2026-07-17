@@ -5,6 +5,13 @@ import {
 } from './lib/site-adapters.mjs';
 import { resolveTweetMedia } from './lib/tweet-syndication.mjs';
 import {
+  ensureOverlayMigrated,
+  getWork,
+  getWorkImagesMap,
+  saveWorkBundle,
+  deleteWork,
+} from './lib/overlay-db.mjs';
+import {
   getThumbsMap,
   getThumbsNeedingResolve,
   putThumbsBatch,
@@ -87,6 +94,7 @@ function runStorageMigration() {
 }
 
 runStorageMigration();
+ensureOverlayMigrated().catch((e) => console.warn('DeepOverlay: overlay IDB migrate', e));
 
 // Shortcuts
 chrome.commands.onCommand.addListener((command) => {
@@ -124,10 +132,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch(() => sendResponse({ cache: {} }));
     return true;
   }
+  if (request.action === "OVERLAY_ENSURE_READY") {
+    ensureOverlayMigrated()
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ error: String(e?.message || e) }));
+    return true;
+  }
+  if (request.action === "OVERLAY_GET_WORK") {
+    getWork(request.storageKey)
+      .then((result) => sendResponse({ result }))
+      .catch((e) => sendResponse({ error: String(e?.message || e) }));
+    return true;
+  }
+  if (request.action === "OVERLAY_GET_IMAGES") {
+    getWorkImagesMap(request.refKeys || [])
+      .then((result) => sendResponse({ result }))
+      .catch((e) => sendResponse({ error: String(e?.message || e) }));
+    return true;
+  }
+  if (request.action === "OVERLAY_SAVE") {
+    saveWorkBundle(request.payload)
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ error: String(e?.message || e) }));
+    return true;
+  }
+  if (request.action === "OVERLAY_DELETE") {
+    deleteWork(request.storageKey)
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ error: String(e?.message || e) }));
+    return true;
+  }
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   runStorageMigration();
+  ensureOverlayMigrated().catch((e) => console.warn('DeepOverlay: overlay IDB migrate', e));
   chrome.action.setPopup({ popup: "popup.html" });
 });
 

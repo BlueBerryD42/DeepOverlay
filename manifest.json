@@ -47,6 +47,7 @@
       ],
       "js": [
         "adapters.js",
+        "storage-client.js",
         "content.js"
       ],
       "css": [
